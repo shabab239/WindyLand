@@ -1,0 +1,28 @@
+name: build
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Build
+        run: cargo build --release
+      - name: Self-test
+        shell: pwsh
+        run: |
+          $env:WINDYLAND_DATA_DIR = "$env:RUNNER_TEMP\wl"
+          $env:WINDYLAND_SELFTEST_OUT = "$env:RUNNER_TEMP\selftest.txt"
+          Start-Process .\target\release\windyland.exe -ArgumentList '--selftest' -Wait
+          Get-Content $env:WINDYLAND_SELFTEST_OUT
+          if (Select-String -Path $env:WINDYLAND_SELFTEST_OUT -Pattern '^FAIL' -Quiet) { exit 1 }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windyland
+          path: target/release/windyland.exe
