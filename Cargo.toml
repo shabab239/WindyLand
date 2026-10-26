@@ -1,0 +1,68 @@
+[package]
+name = "windyland"
+version = "0.1.4"
+edition = "2021"
+license = "MIT"
+repository = "https://github.com/shabab239/WindyLand"
+authors = ["Shabab"]
+description = "A living notch for Windows: music, lyrics, focus timer, water reminder, to-do and file shelf."
+
+[[bin]]
+name = "windyland"
+path = "src/main.rs"
+
+[dependencies]
+serde_json = "1.0.154"
+windows-core = "0.58"
+
+[dependencies.windows]
+version = "0.58"
+features = [
+    "implement",
+    "Foundation",
+    "Foundation_Collections",
+    "Foundation_Numerics",
+    "Media_Control",
+    "Storage_Streams",
+    "Devices_Enumeration",
+    "Devices_Bluetooth",
+    "Win32_Foundation",
+    "Win32_Globalization",
+    "Win32_Graphics_Direct2D",
+    "Win32_Graphics_Direct2D_Common",
+    "Win32_Graphics_DirectWrite",
+    "Win32_Graphics_Dxgi_Common",
+    "Win32_Graphics_Gdi",
+    "Win32_Graphics_Imaging",
+    "Win32_Media_Audio",
+    "Win32_Media_Audio_Endpoints",
+    "Win32_Networking_NetworkListManager",
+    "Win32_Networking_WinHttp",
+    "Win32_Security",
+    "Win32_Storage_FileSystem",
+    "Win32_System_Com",
+    "Win32_System_Com_StructuredStorage",
+    "Win32_System_DataExchange",
+    "Win32_System_LibraryLoader",
+    "Win32_System_Memory",
+    "Win32_System_Ole",
+    "Win32_System_Power",
+    "Win32_System_Registry",
+    "Win32_System_SystemInformation",
+    "Win32_System_SystemServices",
+    "Win32_System_Threading",
+    "Win32_System_Variant",
+    "Win32_UI_HiDpi",
+    "Win32_UI_Input_KeyboardAndMouse",
+    "Win32_UI_Shell",
+    "Win32_UI_Shell_Common",
+    "Win32_UI_Shell_PropertiesSystem",
+    "Win32_UI_WindowsAndMessaging",
+]
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true
