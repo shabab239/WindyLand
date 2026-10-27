@@ -64,6 +64,9 @@ fn main() {
         if GetLastError() == ERROR_ALREADY_EXISTS {
             return;
         }
+        if let Ok(h) = &mutex {
+            app::SINGLE_INSTANCE.store(h.0 as isize, std::sync::atomic::Ordering::SeqCst);
+        }
 
         if let Err(e) = app::App::create(true) {
             let msg = HSTRING::from(format!("WindyLand failed to start:\n{e}"));

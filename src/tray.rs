@@ -21,6 +21,7 @@ const ID_CENTER: u32 = 39;
 const ID_VOLUME: u32 = 4;
 const ID_OPEN_DATA: u32 = 5;
 const ID_ABOUT: u32 = 8;
+const ID_UPDATES: u32 = 6;
 const ID_EXIT: u32 = 9;
 
 const RUN_KEY: PCWSTR = w!("Software\\Microsoft\\Windows\\CurrentVersion\\Run");
@@ -125,6 +126,7 @@ pub fn show_menu() {
         item(ID_VOLUME, w!("Volume overlay"), volume);
         let _ = AppendMenuW(menu, MF_SEPARATOR, 0, None);
         item(ID_OPEN_DATA, w!("Open data folder"), false);
+        item(ID_UPDATES, w!("Check for updates"), false);
         item(ID_ABOUT, w!("About WindyLand"), false);
         let _ = AppendMenuW(menu, MF_SEPARATOR, 0, None);
         item(ID_EXIT, w!("Exit"), false);
@@ -164,6 +166,11 @@ pub fn command(app: &mut App, id: u32) {
             app.set_edge(e, true);
         }
         ID_VOLUME => app.settings.volume_overlay = !app.settings.volume_overlay,
+        ID_UPDATES => {
+            if let Some(i) = app.modules.iter().position(|m| m.title() == "Updates") {
+                app.call(i, |m, c| m.action(crate::modules::update::A_CHECK_NOW, (0.0, 0.0), c));
+            }
+        }
         ID_OPEN_DATA => unsafe {
             let d = HSTRING::from(crate::store::dir().display().to_string());
             ShellExecuteW(None, w!("open"), &d, None, None, SW_SHOWNORMAL);
@@ -179,9 +186,14 @@ pub fn command(app: &mut App, id: u32) {
 
 pub fn about() {
     unsafe {
+        let text = HSTRING::from(format!(
+            "WindyLand {}\n\nA living notch for Windows.\nMusic, lyrics, timer, Pomodoro, to-do, water reminder and file shelf.\n\nLyrics provided by LRCLIB (lrclib.net).\nYour data stays in %APPDATA%\\WindyLand.\n\nhttps://github.com/{}",
+            crate::modules::update::VERSION,
+            crate::modules::update::REPO
+        ));
         MessageBoxW(
             None,
-            w!("WindyLand\n\nA living notch for Windows.\nMusic, lyrics, focus timer, water reminder, to-do and file shelf.\n\nLyrics provided by LRCLIB (lrclib.net).\nYour data stays in %APPDATA%\\WindyLand."),
+            &text,
             w!("About WindyLand"),
             MB_OK | MB_ICONINFORMATION,
         );

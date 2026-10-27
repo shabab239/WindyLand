@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: User guide
+    url: https://github.com/shabab239/WindyLand/blob/main/docs/USER_GUIDE.md
+    about: How to use every feature, plus troubleshooting.
+  - name: Download the latest version
+    url: https://github.com/shabab239/WindyLand/releases/latest
+    about: Check you're on the newest release before reporting.

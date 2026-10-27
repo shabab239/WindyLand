@@ -100,6 +100,21 @@ thread_local! {
     static APP: RefCell<Option<App>> = const { RefCell::new(None) };
 }
 
+/// Handle of the single-instance mutex (also the installer's AppMutex).
+pub static SINGLE_INSTANCE: std::sync::atomic::AtomicIsize = std::sync::atomic::AtomicIsize::new(0);
+
+/// Release the single-instance mutex early, so an installer started by the
+/// updater doesn't see WindyLand as still running while we shut down.
+pub fn release_single_instance() {
+    let h = SINGLE_INSTANCE.swap(0, std::sync::atomic::Ordering::SeqCst);
+    if h != 0 {
+        unsafe {
+            let _ = windows::Win32::System::Threading::ReleaseMutex(HANDLE(h as *mut _));
+            let _ = CloseHandle(HANDLE(h as *mut _));
+        }
+    }
+}
+
 /// Leak the app at exit: dropping D2D/COM/WinRT objects from a thread-local
 /// destructor during process teardown is unsafe and corrupts the exit code.
 pub fn shutdown() {
@@ -1347,6 +1362,38 @@ pub fn selftest() -> String {
                 m.action(1, (0.0, 0.0), c);
             });
             a.expanded = false;
+        }
+        // Updates: version maths, release parsing, and a live GitHub check.
+        {
+            use crate::modules::update::*;
+            let ok = is_newer("v0.1.10", "0.1.9") && !is_newer("0.1.4", "0.1.4") && !is_newer("v0.1.3", "0.1.4") && is_newer("1.0.0", "0.9.9");
+            out += &format!("{:<4} update version comparison\n", if ok { "OK" } else { "FAIL" });
+            let json = br#"{"tag_name":"v9.9.9","html_url":"https://x","draft":false,"prerelease":false,
+                "assets":[{"name":"WindyLandSetup-9.9.9.exe","browser_download_url":"https://github.com/a/b.exe","size":123}]}"#;
+            let rel = parse_release(json);
+            let ok = rel.as_ref().map_or(false, |r| r.version == "9.9.9" && r.installer.as_ref().map_or(false, |i| i.1 == 123));
+            out += &format!("{:<4} update release JSON parsing\n", if ok { "OK" } else { "FAIL" });
+            match fetch_latest() {
+                Ok(r) => {
+                    out += &format!(
+                        "INFO latest GitHub release: {} (installer {}), this build {} -> {}\n",
+                        r.version,
+                        r.installer.as_ref().map_or("missing".to_string(), |i| format!("{} bytes", i.1)),
+                        VERSION,
+                        if is_newer(&r.version, VERSION) { "update offered" } else { "up to date" }
+                    );
+                    if std::env::var("WINDYLAND_TEST_DOWNLOAD").is_ok() {
+                        match download_installer(&r) {
+                            Ok(p) => {
+                                out += &format!("OK   installer download from GitHub ({})\n", p.display());
+                                let _ = std::fs::remove_file(p);
+                            }
+                            Err(e) => out += &format!("FAIL installer download from GitHub: {e}\n"),
+                        }
+                    }
+                }
+                Err(e) => out += &format!("INFO latest GitHub release: check failed ({e})\n"),
+            }
         }
         for i in 0..a.modules.len() {
             let s = a.modules[i].debug_state();

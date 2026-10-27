@@ -19,6 +19,7 @@ AppSupportURL=https://github.com/shabab239/WindyLand/issues
 AppUpdatesURL=https://github.com/shabab239/WindyLand/releases
 AppCopyright=Copyright (C) 2026 Shabab
 AppMutex=WindyLand.SingleInstance
+CloseApplications=yes
 DefaultDirName={autopf}\WindyLand
 DefaultGroupName=WindyLand
 DisableDirPage=yes
@@ -59,7 +60,7 @@ Name: "{autoprograms}\WindyLand"; Filename: "{app}\windyland.exe"
 Name: "{autodesktop}\WindyLand"; Filename: "{app}\windyland.exe"; Tasks: desktop
 
 [Run]
-Filename: "{app}\windyland.exe"; Description: "{cm:LaunchProgram,WindyLand}"; Flags: postinstall nowait skipifsilent
+Filename: "{app}\windyland.exe"; Description: "{cm:LaunchProgram,WindyLand}"; Flags: postinstall nowait
 
 [UninstallDelete]
 Type: filesandordirs; Name: "{app}"

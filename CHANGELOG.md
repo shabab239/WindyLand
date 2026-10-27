@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.1.5
+
+- Update check: shortly after start and twice a day WindyLand looks for a
+  newer GitHub release and offers Update / Later / Skip. Update downloads
+  the installer, upgrades in place and restarts. Also in the tray menu as
+  Check for updates. About now shows the version.
+- Bug report and feature request forms on GitHub.
+- Fixed album art sometimes staying on the previous song: players publish
+  the new title before the new cover, so the cover is now re-checked for a
+  while after each track change.
+
 ## 0.1.4
 
 - Fixed the Timer's -1 min button being cut off and the Water settings

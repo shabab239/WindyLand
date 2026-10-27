@@ -86,7 +86,7 @@ fn spawn_media(shared: Arc<Mutex<MediaInfo>>, rx: Receiver<Cmd>, hwnd: isize) {
                 Err(_) => std::thread::sleep(Duration::from_secs(5)),
             }
         };
-        let mut last_key = String::new();
+        let mut art = ArtTrack::default();
         loop {
             match rx.recv_timeout(Duration::from_millis(1000)) {
                 Ok(cmd) => {
@@ -103,7 +103,7 @@ fn spawn_media(shared: Arc<Mutex<MediaInfo>>, rx: Receiver<Cmd>, hwnd: isize) {
                 Err(RecvTimeoutError::Timeout) => {}
                 Err(RecvTimeoutError::Disconnected) => break,
             }
-            let info = poll(&mgr, &shared, &mut last_key);
+            let info = poll(&mgr, &shared, &mut art);
             let changed = {
                 let mut cur = shared.lock().unwrap();
                 let drift = (cur.position() - info.position()).abs() > 2.5;
@@ -123,10 +123,22 @@ fn spawn_media(shared: Arc<Mutex<MediaInfo>>, rx: Receiver<Cmd>, hwnd: isize) {
     });
 }
 
-unsafe fn poll(mgr: &GlobalSystemMediaTransportControlsSessionManager, shared: &Arc<Mutex<MediaInfo>>, last_key: &mut String) -> MediaInfo {
+/// Album-art bookkeeping for the media thread.
+#[derive(Default)]
+struct ArtTrack {
+    key: String,
+    /// When the current track started (unix secs).
+    since: f64,
+    /// Last time the thumbnail was read.
+    read_at: f64,
+    /// Hash of the raw thumbnail bytes last decoded (0 = none).
+    hash: u64,
+}
+
+unsafe fn poll(mgr: &GlobalSystemMediaTransportControlsSessionManager, shared: &Arc<Mutex<MediaInfo>>, art_st: &mut ArtTrack) -> MediaInfo {
     let prev = shared.lock().unwrap().clone();
     let Ok(s) = mgr.GetCurrentSession() else {
-        *last_key = String::new();
+        art_st.key = String::new();
         return MediaInfo::default();
     };
     let mut info = MediaInfo { has: true, ..Default::default() };
@@ -157,24 +169,39 @@ unsafe fn poll(mgr: &GlobalSystemMediaTransportControlsSessionManager, shared: &
         info.pos = prev.pos;
         info.stamp = prev.stamp;
     }
-    // Album art: refetch when the track changes (and once more shortly after,
-    // because many players publish the thumbnail a moment late).
+    // Album art. Players often publish the new title before the new cover,
+    // so a read right at the track change can return the previous song's
+    // art. Re-read every second for 15 s after a change, then every 5 s, and
+    // only decode/redraw when the raw bytes actually differ.
     let key = info.key();
-    if key != *last_key || (prev.art.is_none() && prev.key() == key) {
-        let art = props.ok().and_then(|p| p.Thumbnail().ok()).and_then(|t| read_thumb(&t));
-        if key != *last_key || art.is_some() {
-            info.art = art.map(Arc::new);
+    let now = unix_now();
+    let new_track = key != art_st.key;
+    if new_track {
+        art_st.key = key;
+        art_st.since = now;
+    }
+    let every = if now - art_st.since < 15.0 { 0.9 } else { 5.0 };
+    info.art = prev.art.clone();
+    info.art_ver = prev.art_ver;
+    if new_track || now - art_st.read_at >= every {
+        art_st.read_at = now;
+        let raw = props.ok().and_then(|p| p.Thumbnail().ok()).and_then(|t| read_thumb_bytes(&t));
+        let hash = raw.as_ref().map_or(0, |b| fnv1a(b));
+        if hash != art_st.hash || (new_track && hash == 0) {
+            art_st.hash = hash;
+            info.art = raw.and_then(|b| decode_square(&b, 160)).map(Arc::new);
             info.art_ver = prev.art_ver + 1;
-        } else {
-            info.art = prev.art.clone();
-            info.art_ver = prev.art_ver;
         }
-        *last_key = key;
-    } else {
-        info.art = prev.art.clone();
-        info.art_ver = prev.art_ver;
     }
     info
+}
+
+fn fnv1a(b: &[u8]) -> u64 {
+    let mut h: u64 = 0xcbf29ce484222325;
+    for &x in b {
+        h = (h ^ x as u64).wrapping_mul(0x100000001b3);
+    }
+    h | 1
 }
 
 fn pretty_app(aumid: &str) -> String {
@@ -197,7 +224,7 @@ fn pretty_app(aumid: &str) -> String {
     aumid.rsplit(['\\', '!', '.']).next().unwrap_or(aumid).trim_end_matches(".exe").to_string()
 }
 
-unsafe fn read_thumb(r: &windows::Storage::Streams::IRandomAccessStreamReference) -> Option<(u32, u32, Vec<u8>)> {
+unsafe fn read_thumb_bytes(r: &windows::Storage::Streams::IRandomAccessStreamReference) -> Option<Vec<u8>> {
     let stream = r.OpenReadAsync().ok()?.get().ok()?;
     let size = stream.Size().ok()? as u32;
     if size == 0 || size > 20_000_000 {
@@ -208,7 +235,7 @@ unsafe fn read_thumb(r: &windows::Storage::Streams::IRandomAccessStreamReference
     reader.LoadAsync(size).ok()?.get().ok()?;
     let mut buf = vec![0u8; size as usize];
     reader.ReadBytes(&mut buf).ok()?;
-    decode_square(&buf, 160)
+    Some(buf)
 }
 
 /// Decode any image WIC understands, centre-crop to a square, scale to `side`.

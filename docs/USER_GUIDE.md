@@ -13,6 +13,7 @@
 - [Alerts and overlays](#alerts-and-overlays)
 - [The mascot](#the-mascot)
 - [Settings and your data](#settings-and-your-data)
+- [Updates](#updates)
 - [Troubleshooting](#troubleshooting)
 
 ## Getting started
@@ -153,14 +154,26 @@ Right-click the notch or the tray icon:
 | Position | Top, Bottom, Left, Right, Center on edge |
 | Personality | Mascot eyes on or off |
 | Volume overlay | Show volume changes |
+| Check for updates | Looks for a newer version now |
 | Open data folder | Opens `%APPDATA%\WindyLand` |
 | About / Exit | |
 
 Everything is stored as plain text in `%APPDATA%\WindyLand` (`settings.txt`, `todo.txt`, `water.txt`, `shelf.txt`). Uninstalling from **Settings > Apps** asks whether to delete it too.
+
+## Updates
+
+WindyLand checks GitHub for a new version shortly after it starts and then twice a day. When there is one, the notch shows **Update available**:
+
+- **Update** downloads the installer, upgrades in place and starts the new version. Your data and settings stay.
+- **Later** asks again at the next check.
+- **Skip** ignores that version (newer ones are still offered).
+
+To check yourself, right-click and choose **Check for updates**. The check only asks GitHub for the latest release number; nothing about you is sent.
 
 ## Troubleshooting
 
 - **Nothing in Now playing.** Make sure the player shows up in the Windows media overlay (press a media key and look at the volume flyout).
 - **The notch disappeared.** It hides while a full-screen game, video or presentation is running.
 - **It opens when I reach for my tabs.** Switch to the Compact, Pill or Hidden style, or move it to another edge.
+- **Found a bug or have an idea?** Open an [issue](https://github.com/shabab239/WindyLand/issues/new/choose); the form asks for what helps.
 - **Lyrics not available.** The song is not on LRCLIB yet, or the title from the player is too unusual to match.

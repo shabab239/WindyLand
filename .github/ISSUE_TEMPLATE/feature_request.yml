@@ -1,0 +1,36 @@
+name: Feature request
+description: Suggest an idea or improvement
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What would you like to do?
+      description: The problem or moment where WindyLand could help.
+      placeholder: "I'd like to see my next calendar event without opening Outlook."
+    validations:
+      required: true
+  - type: textarea
+    id: idea
+    attributes:
+      label: How could it work?
+      description: Where it shows (closed notch, panel, alert) and what you'd click.
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - New feature / tab
+        - Notch (look, position, styles)
+        - Now playing / lyrics
+        - Timer / stopwatch / Pomodoro
+        - To-do
+        - Water reminder
+        - File shelf
+        - Alerts
+        - Other
+  - type: textarea
+    id: extra
+    attributes:
+      label: Anything else?
+      description: Mockups, screenshots, or apps that do this well.

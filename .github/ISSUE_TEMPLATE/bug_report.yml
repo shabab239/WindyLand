@@ -1,0 +1,69 @@
+name: Bug report
+description: Something isn't working right
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: Thanks for reporting! A few details help a lot.
+  - type: input
+    id: version
+    attributes:
+      label: WindyLand version
+      description: Right-click the notch or tray icon, then About WindyLand.
+      placeholder: "0.1.5"
+    validations:
+      required: true
+  - type: dropdown
+    id: windows
+    attributes:
+      label: Windows version
+      options:
+        - Windows 11
+        - Windows 10
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Which part?
+      options:
+        - Notch (open/close, position, styles)
+        - Now playing / lyrics
+        - Timer / stopwatch
+        - Pomodoro
+        - To-do
+        - Water reminder
+        - File shelf
+        - Alerts (battery, network, volume, Caps Lock, Bluetooth)
+        - Installer / updates
+        - Other
+    validations:
+      required: true
+  - type: input
+    id: setup
+    attributes:
+      label: Notch style and position
+      placeholder: "Pill, top edge, second monitor, 150% scaling"
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened?
+      description: And what did you expect instead?
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Play a song in Spotify
+        2. Open lyrics
+        3. ...
+  - type: textarea
+    id: extra
+    attributes:
+      label: Screenshots or logs
+      description: >
+        Drag images in here. For click problems, start WindyLand with the
+        environment variable WINDYLAND_DEBUG=1 and attach debug.log from
+        %APPDATA%\WindyLand (it only lists clicks, no personal data).

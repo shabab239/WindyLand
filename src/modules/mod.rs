@@ -21,6 +21,7 @@ pub mod shelf;
 pub mod system;
 pub mod timer;
 pub mod todo;
+pub mod update;
 pub mod water;
 
 /// Every module, in tab order. Modules with `has_tab() == false` run in the
@@ -34,6 +35,7 @@ pub fn all(hwnd: HWND) -> Vec<Box<dyn Module>> {
         Box::new(todo::Todo::load()),
         Box::new(shelf::Shelf::load()),
         Box::new(system::System::new(hwnd)),
+        Box::new(update::Updater::new(hwnd)),
         // Box::new(example::Example::default()),
     ]
 }
