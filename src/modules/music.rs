@@ -185,7 +185,7 @@ unsafe fn poll(mgr: &GlobalSystemMediaTransportControlsSessionManager, shared: &
     info.art_ver = prev.art_ver;
     if new_track || now - art_st.read_at >= every {
         art_st.read_at = now;
-        let raw = props.ok().and_then(|p| p.Thumbnail().ok()).and_then(|t| read_thumb_bytes(&t));
+        let raw = props.ok().and_then(|p| p.Thumbnail().ok()).and_then(|t| read_stream_bytes(&t));
         let hash = raw.as_ref().map_or(0, |b| fnv1a(b));
         if hash != art_st.hash || (new_track && hash == 0) {
             art_st.hash = hash;
@@ -224,7 +224,7 @@ fn pretty_app(aumid: &str) -> String {
     aumid.rsplit(['\\', '!', '.']).next().unwrap_or(aumid).trim_end_matches(".exe").to_string()
 }
 
-unsafe fn read_thumb_bytes(r: &windows::Storage::Streams::IRandomAccessStreamReference) -> Option<Vec<u8>> {
+pub(crate) unsafe fn read_stream_bytes(r: &windows::Storage::Streams::IRandomAccessStreamReference) -> Option<Vec<u8>> {
     let stream = r.OpenReadAsync().ok()?.get().ok()?;
     let size = stream.Size().ok()? as u32;
     if size == 0 || size > 20_000_000 {
@@ -239,7 +239,7 @@ unsafe fn read_thumb_bytes(r: &windows::Storage::Streams::IRandomAccessStreamRef
 }
 
 /// Decode any image WIC understands, centre-crop to a square, scale to `side`.
-unsafe fn decode_square(bytes: &[u8], side: u32) -> Option<(u32, u32, Vec<u8>)> {
+pub(crate) unsafe fn decode_square(bytes: &[u8], side: u32) -> Option<(u32, u32, Vec<u8>)> {
     let f: IWICImagingFactory = CoCreateInstance(&CLSID_WICImagingFactory, None, CLSCTX_INPROC_SERVER).ok()?;
     let stream = f.CreateStream().ok()?;
     stream.InitializeFromMemory(bytes).ok()?;
@@ -502,12 +502,13 @@ impl Music {
         let lyr = ctl.cut_right(32.0, 0.0);
         let fg = if self.show_lyrics { col::ACCENT } else { col::DIM };
         let bg = if self.show_lyrics { Some(col::ACCENT.with_a(0.18)) } else { None };
-        ui.icon_btn(lyr, glyph::LYRICS, A_LYRICS, 14.0, fg, bg);
+        ui.icon_btn(lyr, glyph::LYRICS, A_LYRICS, 14.0, fg, bg, if self.show_lyrics { "Hide lyrics" } else { "Show lyrics" });
         let mid = ctl.centered(32.0 * 3.0 + 24.0, 32.0);
         let cells = mid.columns(3, 12.0);
-        ui.icon_btn(cells[0], glyph::PREV, A_PREV, 15.0, col::TEXT, None);
-        ui.icon_btn(cells[1], if info.playing { glyph::PAUSE } else { glyph::PLAY }, A_TOGGLE, 17.0, col::TEXT, None);
-        ui.icon_btn(cells[2], glyph::NEXT, A_NEXT, 15.0, col::TEXT, None);
+        ui.icon_btn(cells[0], glyph::PREV, A_PREV, 15.0, col::TEXT, None, "Previous");
+        let (g, tip) = if info.playing { (glyph::PAUSE, "Pause") } else { (glyph::PLAY, "Play") };
+        ui.icon_btn(cells[1], g, A_TOGGLE, 17.0, col::TEXT, None, tip);
+        ui.icon_btn(cells[2], glyph::NEXT, A_NEXT, 15.0, col::TEXT, None, "Next");
     }
 
     fn draw_lyrics(&mut self, ui: &mut Ui, r: Rect) {
@@ -598,12 +599,15 @@ impl Module for Music {
     fn title(&self) -> &'static str {
         "Now Playing"
     }
+    fn accent(&self) -> Color {
+        col::RED
+    }
     fn icon(&self) -> &'static str {
         glyph::MUSIC
     }
     fn size(&self) -> (f32, f32) {
         if self.show_lyrics && self.info.has {
-            (720.0, 178.0)
+            (720.0, crate::modules::PANEL.1)
         } else {
             (440.0, 112.0)
         }

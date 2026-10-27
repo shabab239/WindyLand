@@ -172,8 +172,8 @@ impl Water {
         ui.progress(left.cut_top(6.0, 14.0), total as f32 / self.goal.max(1) as f32, col::CYAN, None);
         let mut row = left.cut_top(30.0, 0.0);
         ui.button_accent(row.cut_left(96.0, 6.0), &format!("Drink {}", self.sip), A_DRINK, col::CYAN);
-        ui.icon_btn(row.cut_left(30.0, 6.0), glyph::BACK, A_UNDO, 12.0, col::DIM, Some(col::BTN));
-        ui.icon_btn(row.cut_left(30.0, 0.0), glyph::SETTINGS, A_SETTINGS, 12.0, col::DIM, Some(col::BTN));
+        ui.icon_btn(row.cut_left(30.0, 6.0), glyph::BACK, A_UNDO, 12.0, col::DIM, Some(col::BTN), "Undo last drink");
+        ui.icon_btn(row.cut_left(30.0, 0.0), glyph::SETTINGS, A_SETTINGS, 12.0, col::DIM, Some(col::BTN), "Settings");
 
         // Hourly chart for today.
         let hours: Vec<u32> = (self.start_h..self.end_h.max(self.start_h + 1)).collect();
@@ -241,13 +241,13 @@ impl Water {
 
         let mut row = r.cut_top(row_h, 10.0);
         ui.text("Hours", row.cut_left(lab_w, 0.0), 12.0, col::DIM, Weight::Regular, Align::Left);
-        ui.icon_btn(row.cut_left(24.0, 4.0), "\u{E738}", A_START_DOWN, 10.0, col::TEXT, Some(col::BTN));
+        ui.icon_btn(row.cut_left(24.0, 4.0), "\u{E738}", A_START_DOWN, 10.0, col::TEXT, Some(col::BTN), "Start an hour earlier");
         ui.text(&format!("{:02}:00", self.start_h), row.cut_left(48.0, 4.0), 13.0, col::TEXT, Weight::Semi, Align::Center);
-        ui.icon_btn(row.cut_left(24.0, 10.0), glyph::ADD, A_START_UP, 10.0, col::TEXT, Some(col::BTN));
+        ui.icon_btn(row.cut_left(24.0, 10.0), glyph::ADD, A_START_UP, 10.0, col::TEXT, Some(col::BTN), "Start an hour later");
         ui.text("to", row.cut_left(20.0, 10.0), 12.0, col::DIM, Weight::Regular, Align::Center);
-        ui.icon_btn(row.cut_left(24.0, 4.0), "\u{E738}", A_END_DOWN, 10.0, col::TEXT, Some(col::BTN));
+        ui.icon_btn(row.cut_left(24.0, 4.0), "\u{E738}", A_END_DOWN, 10.0, col::TEXT, Some(col::BTN), "End an hour earlier");
         ui.text(&format!("{:02}:00", self.end_h), row.cut_left(48.0, 4.0), 13.0, col::TEXT, Weight::Semi, Align::Center);
-        ui.icon_btn(row.cut_left(24.0, 10.0), glyph::ADD, A_END_UP, 10.0, col::TEXT, Some(col::BTN));
+        ui.icon_btn(row.cut_left(24.0, 10.0), glyph::ADD, A_END_UP, 10.0, col::TEXT, Some(col::BTN), "End an hour later");
 
         let mut row = r.cut_top(28.0, 0.0);
         ui.button(row.cut_left(80.0, 8.0), "Done", A_BACK);
@@ -272,6 +272,9 @@ impl Water {
 impl Module for Water {
     fn title(&self) -> &'static str {
         "Water Reminder"
+    }
+    fn accent(&self) -> Color {
+        col::CYAN
     }
     fn icon(&self) -> &'static str {
         glyph::DROP

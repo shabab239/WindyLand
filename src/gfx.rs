@@ -181,6 +181,13 @@ pub mod glyph {
     pub const KEYBOARD: &str = "\u{E765}";
     pub const CAPS: &str = "\u{E752}";
     pub const DROP: &str = "\u{EB42}";
+    pub const COPY: &str = "\u{E8C8}";
+    pub const PASTE: &str = "\u{E77F}";
+    pub const PIN: &str = "\u{E718}";
+    pub const MIC: &str = "\u{E720}";
+    pub const CAMERA: &str = "\u{E722}";
+    pub const IMAGE: &str = "\u{EB9F}";
+    pub const BELL: &str = "\u{EA8F}";
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]

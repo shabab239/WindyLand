@@ -1,5 +1,6 @@
-//! System-tray icon and menu (Start with Windows, Personality, Minimal notch,
-//! Volume overlay, About, Exit).
+//! System-tray icon. Left-click opens the settings panel in the notch;
+//! right-click shows a short menu (Settings, Check for updates, About, Exit).
+//! The settings themselves live in the notch (`App::draw_settings`).
 
 use std::sync::OnceLock;
 
@@ -11,17 +12,11 @@ use windows::Win32::UI::WindowsAndMessaging::*;
 
 use crate::app::{with_app, App, WM_APP_TRAY};
 use crate::gfx::make_tray_icon;
-use crate::store::{Edge, NotchStyle};
 
-const ID_STARTUP: u32 = 1;
-const ID_PERSONALITY: u32 = 2;
-const ID_STYLE: u32 = 20; // + index into NotchStyle::ALL
-const ID_EDGE: u32 = 30; // + index into Edge::ALL
-const ID_CENTER: u32 = 39;
-const ID_VOLUME: u32 = 4;
-const ID_OPEN_DATA: u32 = 5;
-const ID_ABOUT: u32 = 8;
+const ID_SETTINGS: u32 = 1;
+const ID_TOUR: u32 = 2;
 const ID_UPDATES: u32 = 6;
+const ID_ABOUT: u32 = 8;
 const ID_EXIT: u32 = 9;
 
 const RUN_KEY: PCWSTR = w!("Software\\Microsoft\\Windows\\CurrentVersion\\Run");
@@ -93,43 +88,21 @@ pub fn set_startup(on: bool) {
 }
 
 pub fn show_menu() {
-    let Some((hwnd, personality, style, volume, edge)) =
-        with_app(|a| (a.hwnd, a.settings.personality, a.settings.style, a.settings.volume_overlay, a.settings.edge))
-    else {
+    let Some(hwnd) = with_app(|a| a.hwnd) else {
         return;
     };
     unsafe {
         let Ok(menu) = CreatePopupMenu() else { return };
-        let item = |id: u32, text: PCWSTR, checked: bool| {
-            let flags = MF_STRING | if checked { MF_CHECKED } else { MF_UNCHECKED };
-            let _ = AppendMenuW(menu, flags, id as usize, text);
+        let item = |id: u32, text: PCWSTR| {
+            let _ = AppendMenuW(menu, MF_STRING, id as usize, text);
         };
-        item(ID_STARTUP, w!("Start with Windows"), startup_enabled());
-        if let Ok(sub) = CreatePopupMenu() {
-            for (i, s) in NotchStyle::ALL.into_iter().enumerate() {
-                let flags = MF_STRING | if s == style { MF_CHECKED } else { MF_UNCHECKED };
-                let _ = AppendMenuW(sub, flags, (ID_STYLE + i as u32) as usize, &HSTRING::from(s.label()));
-            }
-            let _ = AppendMenuW(menu, MF_POPUP, sub.0 as usize, w!("Notch style"));
-        }
-        if let Ok(sub) = CreatePopupMenu() {
-            for (i, e) in Edge::ALL.into_iter().enumerate() {
-                let flags = MF_STRING | if e == edge { MF_CHECKED } else { MF_UNCHECKED };
-                let _ = AppendMenuW(sub, flags, (ID_EDGE + i as u32) as usize, &HSTRING::from(e.label()));
-            }
-            let _ = AppendMenuW(sub, MF_SEPARATOR, 0, None);
-            let _ = AppendMenuW(sub, MF_STRING, ID_CENTER as usize, w!("Center on edge"));
-            let _ = AppendMenuW(sub, MF_STRING | MF_GRAYED, 0, w!("Tip: right-click and drag the notch"));
-            let _ = AppendMenuW(menu, MF_POPUP, sub.0 as usize, w!("Position"));
-        }
-        item(ID_PERSONALITY, w!("Personality (mascot eyes, full style)"), personality);
-        item(ID_VOLUME, w!("Volume overlay"), volume);
+        item(ID_SETTINGS, w!("Settings"));
+        let _ = SetMenuDefaultItem(menu, ID_SETTINGS, 0);
+        item(ID_TOUR, w!("Welcome tour"));
+        item(ID_UPDATES, w!("Check for updates"));
+        item(ID_ABOUT, w!("About WindyLand"));
         let _ = AppendMenuW(menu, MF_SEPARATOR, 0, None);
-        item(ID_OPEN_DATA, w!("Open data folder"), false);
-        item(ID_UPDATES, w!("Check for updates"), false);
-        item(ID_ABOUT, w!("About WindyLand"), false);
-        let _ = AppendMenuW(menu, MF_SEPARATOR, 0, None);
-        item(ID_EXIT, w!("Exit"), false);
+        item(ID_EXIT, w!("Exit"));
 
         let mut p = POINT::default();
         let _ = GetCursorPos(&mut p);
@@ -153,28 +126,13 @@ pub fn show_menu() {
 
 pub fn command(app: &mut App, id: u32) {
     match id {
-        ID_STARTUP => set_startup(!startup_enabled()),
-        ID_PERSONALITY => app.settings.personality = !app.settings.personality,
-        i if (ID_STYLE..ID_STYLE + NotchStyle::ALL.len() as u32).contains(&i) => {
-            app.settings.style = NotchStyle::ALL[(i - ID_STYLE) as usize];
-        }
-        i if (ID_EDGE..ID_EDGE + Edge::ALL.len() as u32).contains(&i) => {
-            app.set_edge(Edge::ALL[(i - ID_EDGE) as usize], false);
-        }
-        ID_CENTER => {
-            let e = app.settings.edge;
-            app.set_edge(e, true);
-        }
-        ID_VOLUME => app.settings.volume_overlay = !app.settings.volume_overlay,
+        ID_SETTINGS => app.open_settings(),
+        ID_TOUR => app.start_onboarding(),
         ID_UPDATES => {
             if let Some(i) = app.modules.iter().position(|m| m.title() == "Updates") {
                 app.call(i, |m, c| m.action(crate::modules::update::A_CHECK_NOW, (0.0, 0.0), c));
             }
         }
-        ID_OPEN_DATA => unsafe {
-            let d = HSTRING::from(crate::store::dir().display().to_string());
-            ShellExecuteW(None, w!("open"), &d, None, None, SW_SHOWNORMAL);
-        },
         ID_EXIT => unsafe {
             let _ = DestroyWindow(app.hwnd);
         },
@@ -187,7 +145,7 @@ pub fn command(app: &mut App, id: u32) {
 pub fn about() {
     unsafe {
         let text = HSTRING::from(format!(
-            "WindyLand {}\n\nA living notch for Windows.\nMusic, lyrics, timer, Pomodoro, to-do, water reminder and file shelf.\n\nLyrics provided by LRCLIB (lrclib.net).\nYour data stays in %APPDATA%\\WindyLand.\n\nhttps://github.com/{}",
+            "WindyLand {}\n\nA living notch for Windows.\nMusic, lyrics, timer, Pomodoro, to-do, water reminder, file shelf and clipboard history.\n\nLyrics provided by LRCLIB (lrclib.net).\nYour data stays in %APPDATA%\\WindyLand.\n\nhttps://github.com/{}",
             crate::modules::update::VERSION,
             crate::modules::update::REPO
         ));

@@ -146,6 +146,9 @@ impl Module for Pomodoro {
     fn title(&self) -> &'static str {
         "Pomodoro"
     }
+    fn accent(&self) -> Color {
+        col::GREEN
+    }
     fn icon(&self) -> &'static str {
         glyph::TIMER
     }

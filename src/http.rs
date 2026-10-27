@@ -6,7 +6,12 @@ use windows::Win32::Networking::WinHttp::*;
 pub struct Response {
     pub status: u32,
     pub body: Vec<u8>,
+    /// The `Location` header of a redirect (only seen with `get_no_redirect`).
+    pub location: Option<String>,
 }
+
+/// Largest body read (the installer download is the biggest, ~2.5 MB).
+const MAX_BODY: usize = 64 * 1024 * 1024;
 
 struct H(*mut core::ffi::c_void);
 impl Drop for H {
@@ -20,6 +25,15 @@ impl Drop for H {
 }
 
 pub fn get(host: &str, path: &str) -> Option<Response> {
+    request(host, path, true)
+}
+
+/// GET without following redirects, to read where a redirect points.
+pub fn get_no_redirect(host: &str, path: &str) -> Option<Response> {
+    request(host, path, false)
+}
+
+fn request(host: &str, path: &str, follow: bool) -> Option<Response> {
     unsafe {
         let session = H(WinHttpOpen(
             w!("WindyLand/0.1 (https://github.com/shabab239/WindyLand)"),
@@ -50,6 +64,10 @@ pub fn get(host: &str, path: &str) -> Option<Response> {
         if req.0.is_null() {
             return None;
         }
+        if !follow {
+            let off = WINHTTP_DISABLE_REDIRECTS.to_le_bytes();
+            let _ = WinHttpSetOption(Some(req.0), WINHTTP_OPTION_DISABLE_FEATURE, Some(&off));
+        }
         WinHttpSendRequest(req.0, None, None, 0, 0, 0).ok()?;
         WinHttpReceiveResponse(req.0, std::ptr::null_mut()).ok()?;
 
@@ -65,6 +83,16 @@ pub fn get(host: &str, path: &str) -> Option<Response> {
             &mut idx,
         );
 
+        let mut location = None;
+        if !follow {
+            let mut buf = [0u16; 1024];
+            let mut blen = (buf.len() * 2) as u32;
+            let mut idx = 0u32;
+            if WinHttpQueryHeaders(req.0, WINHTTP_QUERY_LOCATION, PCWSTR::null(), Some(buf.as_mut_ptr() as *mut _), &mut blen, &mut idx).is_ok() {
+                location = Some(String::from_utf16_lossy(&buf[..(blen as usize / 2).min(buf.len())]));
+            }
+        }
+
         let mut body = Vec::new();
         loop {
             let mut avail = 0u32;
@@ -79,11 +107,11 @@ pub fn get(host: &str, path: &str) -> Option<Response> {
                 break;
             }
             body.truncate(start + read as usize);
-            if body.len() > 4 * 1024 * 1024 {
+            if body.len() > MAX_BODY {
                 break;
             }
         }
-        Some(Response { status, body })
+        Some(Response { status, body, location })
     }
 }
 

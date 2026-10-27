@@ -1,5 +1,7 @@
 //! Update checker (no tab). Shortly after start and then twice a day it asks
-//! GitHub for the latest release. If it's newer, it shows a toast with
+//! GitHub for the latest release: first the API, and if that refuses (it
+//! allows 60 requests an hour per internet address, and many ISPs share one
+//! address between lots of customers) the normal release pages. If it's newer, it shows a toast with
 //! Update / Later / Skip. "Update" downloads the installer, runs it silently
 //! and quits; the installer upgrades in place and starts WindyLand again.
 
@@ -28,13 +30,23 @@ const A_OPEN_PAGE: u32 = 5;
 
 const FIRST_CHECK_AFTER: f64 = 20.0;
 const CHECK_EVERY: f64 = 12.0 * 3600.0;
+/// After a failed automatic check, try again this soon.
+const RETRY_AFTER: f64 = 3600.0;
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Release {
     pub version: String,
     pub page: String,
-    /// Installer download URL and size in bytes.
-    pub installer: Option<(String, u64)>,
+    pub installer: Option<Installer>,
+}
+
+/// The release's installer and what to check the download against.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Installer {
+    pub url: String,
+    pub size: Option<u64>,
+    /// Lowercase hex SHA-256, as GitHub publishes for every release file.
+    pub sha256: Option<String>,
 }
 
 #[derive(Clone, Debug)]
@@ -79,7 +91,11 @@ pub fn parse_release(body: &[u8]) -> Option<Release> {
         assets.iter().find_map(|a| {
             let name = a.get("name")?.as_str()?.to_lowercase();
             if name.starts_with("windylandsetup") && name.ends_with(".exe") {
-                Some((a.get("browser_download_url")?.as_str()?.to_string(), a.get("size")?.as_u64()?))
+                Some(Installer {
+                    url: a.get("browser_download_url")?.as_str()?.to_string(),
+                    size: a.get("size").and_then(|s| s.as_u64()),
+                    sha256: a.get("digest").and_then(|d| d.as_str()).and_then(|d| d.strip_prefix("sha256:")).map(|d| d.to_lowercase()),
+                })
             } else {
                 None
             }
@@ -88,27 +104,89 @@ pub fn parse_release(body: &[u8]) -> Option<Release> {
     Some(Release { version, page, installer })
 }
 
-/// Blocking: ask GitHub for the latest release.
+/// Blocking: ask GitHub for the latest release (API first, then the pages).
 pub fn fetch_latest() -> std::result::Result<Release, String> {
+    fetch_api().or_else(|e| {
+        crate::app::dlog(format!("update: API check failed ({e}), trying the release pages"));
+        fetch_web().map_err(|_| e)
+    })
+}
+
+pub fn fetch_api() -> std::result::Result<Release, String> {
     let r = http::get("api.github.com", &format!("/repos/{REPO}/releases/latest")).ok_or("no connection")?;
     match r.status {
         200 => parse_release(&r.body).ok_or_else(|| "unexpected reply".to_string()),
         404 => Err("no releases yet".into()),
+        403 | 429 => Err("GitHub is busy, try again later".into()),
         s => Err(format!("GitHub replied {s}")),
     }
 }
 
-/// Blocking: download the release installer to %TEMP% and sanity-check it
-/// (exact size from the API, and a Windows exe header).
+/// The same answer from the normal web pages, which aren't rate-limited
+/// like the API: /releases/latest redirects to the newest release's tag, and
+/// its asset list links the installer next to its SHA-256.
+pub fn fetch_web() -> std::result::Result<Release, String> {
+    let r = http::get_no_redirect("github.com", &format!("/{REPO}/releases/latest")).ok_or("no connection")?;
+    let loc = r.location.ok_or_else(|| format!("GitHub replied {}", r.status))?;
+    let tag = loc.split("/releases/tag/").nth(1).map(|t| t.trim().trim_end_matches('/').to_string()).filter(|t| !t.is_empty()).ok_or("no releases yet")?;
+    let version = tag.trim_start_matches(['v', 'V']).to_string();
+    parse_version(&version).ok_or("unexpected reply")?;
+    let page = format!("https://github.com/{REPO}/releases/tag/{tag}");
+    let installer = http::get("github.com", &format!("/{REPO}/releases/expanded_assets/{tag}"))
+        .filter(|r| r.status == 200)
+        .and_then(|r| parse_assets_html(&String::from_utf8_lossy(&r.body), &tag));
+    Some(Release { version, page, installer }).ok_or_else(|| "unexpected reply".into())
+}
+
+/// Find the installer link (and its SHA-256) in a release's asset list HTML.
+pub fn parse_assets_html(html: &str, tag: &str) -> Option<Installer> {
+    let prefix = format!("/{REPO}/releases/download/{tag}/");
+    let mut rest = html;
+    while let Some(i) = rest.find(&prefix) {
+        let after = &rest[i..];
+        let end = after.find('"')?;
+        let path = &after[..end];
+        let name = path.rsplit('/').next().unwrap_or("").to_lowercase();
+        if name.starts_with("windylandsetup") && name.ends_with(".exe") {
+            // The digest sits in the same row, before the next file's link.
+            let row = &after[end..];
+            let row = &row[..row[1..].find(&prefix).map_or(row.len(), |n| n + 1)];
+            let sha256 = row.find("sha256:").map(|k| row[k + 7..].chars().take_while(|c| c.is_ascii_hexdigit()).collect::<String>().to_lowercase()).filter(|h| h.len() == 64);
+            return Some(Installer { url: format!("https://github.com{path}"), size: None, sha256 });
+        }
+        rest = &after[prefix.len()..];
+    }
+    None
+}
+
+/// Lowercase hex SHA-256 (Windows' own implementation).
+pub fn sha256_hex(data: &[u8]) -> String {
+    use windows::Win32::Security::Cryptography::{BCryptHash, BCRYPT_SHA256_ALG_HANDLE};
+    let mut out = [0u8; 32];
+    unsafe {
+        let _ = BCryptHash(BCRYPT_SHA256_ALG_HANDLE, None, data, &mut out);
+    }
+    out.iter().map(|b| format!("{b:02x}")).collect()
+}
+
+/// Blocking: download the release installer to %TEMP% and check it: the
+/// SHA-256 GitHub publishes for it (or the exact size when that's all we
+/// have), and a Windows exe header.
 pub fn download_installer(rel: &Release) -> std::result::Result<std::path::PathBuf, String> {
-    let (url, size) = rel.installer.clone().ok_or("release has no installer")?;
-    let (host, path) = split_url(&url).ok_or("bad download link")?;
+    let inst = rel.installer.clone().ok_or("release has no installer")?;
+    let (host, path) = split_url(&inst.url).ok_or("bad download link")?;
     let r = http::get(&host, &path).ok_or("download failed")?;
     if r.status != 200 {
         return Err(format!("download failed ({})", r.status));
     }
-    if r.body.len() as u64 != size || !r.body.starts_with(b"MZ") {
-        return Err(format!("downloaded file looks wrong ({} of {size} bytes)", r.body.len()));
+    if !r.body.starts_with(b"MZ") {
+        return Err("downloaded file isn't an installer".into());
+    }
+    match (&inst.sha256, inst.size) {
+        (Some(want), _) if sha256_hex(&r.body) != *want => return Err("downloaded file doesn't match the release".into()),
+        (None, Some(size)) if r.body.len() as u64 != size => return Err(format!("download incomplete ({} of {size} bytes)", r.body.len())),
+        (None, None) if r.body.len() < 500_000 => return Err("download incomplete".into()),
+        _ => {}
     }
     let p = std::env::temp_dir().join(format!("WindyLandSetup-{}.exe", rel.version));
     std::fs::write(&p, &r.body).map_err(|e| e.to_string())?;
@@ -232,6 +310,9 @@ impl Module for Updater {
             }
             State::Failed { manual, why } => {
                 *self.state.lock().unwrap() = State::Idle;
+                // Offline or GitHub busy: try again within the hour rather
+                // than waiting half a day.
+                self.next_check = self.next_check.min(unix_now() + RETRY_AFTER);
                 if manual {
                     ctx.toast(Toast::new("update", "\u{E895}", col::YELLOW, "Couldn't check for updates", why));
                 }

@@ -208,10 +208,10 @@ impl Todo {
             }
             let cb = row.cut_left(28.0, 4.0);
             ui.check(cb.cx(), cb.cy(), t.done, col::YELLOW);
-            ui.hit(cb, tid(K_CHECK, t.id));
+            ui.hit_tip(cb, tid(K_CHECK, t.id), if t.done { "Mark as not done" } else { "Mark as done" });
             if ui.hovered(row) || ui.hovered(Rect::new(row.r() - 30.0, row.y, 30.0, row.h)) {
                 let del = row.cut_right(26.0, 4.0);
-                ui.icon_btn(del.centered(24.0, 24.0), glyph::DELETE, tid(K_DELETE, t.id), 11.0, col::DIM, None);
+                ui.icon_btn(del.centered(24.0, 24.0), glyph::DELETE, tid(K_DELETE, t.id), 11.0, col::DIM, None, "Delete task");
             }
             if let Some(due) = t.due {
                 let label = {
@@ -269,10 +269,10 @@ impl Todo {
         }
         if let Some(m) = ed.due {
             let mut right = row;
-            ui.icon_btn(right.cut_right(24.0, 4.0), glyph::ADD, A_PLUS, 10.0, col::TEXT, Some(col::BTN));
+            ui.icon_btn(right.cut_right(24.0, 4.0), glyph::ADD, A_PLUS, 10.0, col::TEXT, Some(col::BTN), "15 minutes later");
             let tl = right.cut_right(50.0, 4.0);
             ui.text(&fmt_mod(m), tl, 13.0, col::YELLOW, Weight::Semi, Align::Center);
-            ui.icon_btn(right.cut_right(24.0, 4.0), "\u{E738}", A_MINUS, 10.0, col::TEXT, Some(col::BTN));
+            ui.icon_btn(right.cut_right(24.0, 4.0), "\u{E738}", A_MINUS, 10.0, col::TEXT, Some(col::BTN), "15 minutes earlier");
         }
 
         let mut row = r.cut_top(30.0, 0.0);
@@ -286,6 +286,9 @@ impl Module for Todo {
     fn title(&self) -> &'static str {
         "TodoList"
     }
+    fn accent(&self) -> Color {
+        col::YELLOW
+    }
     fn icon(&self) -> &'static str {
         glyph::TODO
     }
@@ -293,8 +296,7 @@ impl Module for Todo {
         if self.editor.is_some() {
             (460.0, 150.0)
         } else {
-            let rows = self.tasks.len().clamp(1, 5) as f32;
-            (460.0, 34.0 + rows * 30.0)
+            (480.0, crate::modules::PANEL.1)
         }
     }
 

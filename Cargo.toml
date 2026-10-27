@@ -1,11 +1,11 @@
 [package]
 name = "windyland"
-version = "0.1.5"
+version = "0.1.18"
 edition = "2021"
 license = "MIT"
 repository = "https://github.com/shabab239/WindyLand"
 authors = ["Shabab"]
-description = "A living notch for Windows: music, lyrics, focus timer, water reminder, to-do and file shelf."
+description = "A living notch for Windows: music, lyrics, focus timer, water reminder, to-do, file shelf and clipboard history."
 
 [[bin]]
 name = "windyland"
@@ -24,12 +24,17 @@ features = [
     "Foundation_Numerics",
     "Media_Control",
     "Storage_Streams",
+    "ApplicationModel",
+    "Data_Xml_Dom",
+    "UI_Notifications",
+    "UI_Notifications_Management",
     "Devices_Enumeration",
     "Devices_Bluetooth",
     "Win32_Foundation",
     "Win32_Globalization",
     "Win32_Graphics_Direct2D",
     "Win32_Graphics_Direct2D_Common",
+    "Win32_Graphics_Dwm",
     "Win32_Graphics_DirectWrite",
     "Win32_Graphics_Dxgi_Common",
     "Win32_Graphics_Gdi",
@@ -39,6 +44,7 @@ features = [
     "Win32_Networking_NetworkListManager",
     "Win32_Networking_WinHttp",
     "Win32_Security",
+    "Win32_Security_Cryptography",
     "Win32_Storage_FileSystem",
     "Win32_System_Com",
     "Win32_System_Com_StructuredStorage",
@@ -46,6 +52,7 @@ features = [
     "Win32_System_LibraryLoader",
     "Win32_System_Memory",
     "Win32_System_Ole",
+    "Win32_System_Performance",
     "Win32_System_Power",
     "Win32_System_Registry",
     "Win32_System_SystemInformation",
@@ -54,6 +61,7 @@ features = [
     "Win32_System_Variant",
     "Win32_UI_HiDpi",
     "Win32_UI_Input_KeyboardAndMouse",
+    "Win32_UI_Accessibility",
     "Win32_UI_Shell",
     "Win32_UI_Shell_Common",
     "Win32_UI_Shell_PropertiesSystem",

@@ -211,6 +211,9 @@ impl Module for Timer {
     fn title(&self) -> &'static str {
         "Timer"
     }
+    fn accent(&self) -> Color {
+        C_TIMER
+    }
     fn icon(&self) -> &'static str {
         "\u{E121}"
     }

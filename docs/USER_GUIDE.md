@@ -10,6 +10,9 @@
 - [To-do with reminders](#to-do-with-reminders)
 - [Water reminder](#water-reminder)
 - [File shelf](#file-shelf)
+- [Clipboard history](#clipboard-history)
+- [Mic and camera dots](#mic-and-camera-dots)
+- [Windows notifications in the notch](#windows-notifications-in-the-notch)
 - [Alerts and overlays](#alerts-and-overlays)
 - [The mascot](#the-mascot)
 - [Settings and your data](#settings-and-your-data)
@@ -19,8 +22,12 @@
 ## Getting started
 
 1. Run `WindyLandSetup-<version>.exe`. Tick **Start WindyLand when Windows starts** if you like.
-2. A small black notch appears at the top of your screen, and a tray icon (a pill with two eyes) appears near the clock.
-3. To quit, right-click the tray icon and choose **Exit**.
+2. The notch opens with a short **welcome tour**: pick how it looks when closed (Full, Compact, Pill or Hidden), pick the screen edge, and read three quick tips. You can skip it, and replay it later from the tray icon's menu (**Welcome tour**). Everything you pick can be changed later in Settings.
+
+   <img src="images/tour.png" alt="Welcome tour">
+
+3. A tray icon (a pill with two eyes) appears near the clock.
+4. To quit, right-click the tray icon and choose **Exit**, or use **Quit WindyLand** in Settings.
 
 ## Open and close
 
@@ -36,15 +43,15 @@
 <img src="images/positions.png" alt="Positions">
 
 - **Right-click and drag** the notch. It snaps to the nearest edge of whichever screen the mouse is on: top, bottom, left or right. Let go to place it.
-- Or right-click, open **Position** and pick an edge. **Center on edge** puts it back in the middle.
+- Or open **Settings** and pick an edge under **Position**. **Center** puts it back in the middle.
 - On the left and right edges the closed notch becomes a vertical tab. Panels always open upright.
-- A plain right-click (without dragging) opens the menu.
+- A plain right-click (without dragging) opens Settings.
 
 ## Notch styles
 
 <img src="images/styles.png" alt="Styles">
 
-Right-click, then **Notch style**:
+Open **Settings** and pick one under **Notch style**:
 
 | Style | Looks like | Best for |
 |---|---|---|
@@ -125,6 +132,36 @@ The gear button opens settings: bottle size, daily goal, sip size, active hours 
 - Hover an item and click the **x** to remove it. **Clear** empties the shelf.
 - The shelf keeps links to your files, not copies.
 
+## Clipboard history
+
+<img src="images/clipboard.png" alt="Clipboard history">
+
+- Clipboard history is **off** until you turn it on: open the **Clipboard** tab and click **Turn on clipboard history**, or use the switch in Settings.
+- **What it records** (Settings > Clipboard history): **Text** (the default), **Text + files** (files you copy in Explorer), or **Everything** (also pictures, shown as thumbnails).
+- What you copy appears here, newest first. The last 30 are kept, and up to 10 pictures.
+- **Click** an entry to copy it again, then paste with **Ctrl+V** as usual. Copied files paste into Explorer too.
+- Hover an entry to **pin** it (pinned entries stay at the top and are kept after a restart) or **remove** it. **Clear** removes everything that isn't pinned. The switch in the tab header stops and starts recording.
+- Privacy: unpinned entries and all pictures live in memory only and are gone when WindyLand exits. Pinned text and files are saved in `clipboard.txt`. Passwords and codes copied from password managers that mark them private (KeePass, Bitwarden, 1Password and others) are never recorded.
+
+## Mic and camera dots
+
+- While any app is using your **microphone**, an orange dot appears beside the notch; a green dot means the **camera** is on. The notch also drops a short notice naming the app when it starts.
+- The dots show in every notch style, including Pill and Hidden, and next to the clock when the panel is open.
+- WindyLand reads this from Windows' own privacy records; it does not listen to or watch anything itself. Turn the dots off with **Mic & camera dots** in Settings.
+
+## Windows notifications in the notch
+
+<img src="images/notifications.png" alt="Windows notifications">
+
+WindyLand can show other apps' notifications (messages, mail, calendar, browser sites) in the notch, with the app's icon and colour, instead of Windows' banner in the corner.
+
+- Turn it on in **Settings > Privacy & alerts > Show them in the notch**. It's off until you do.
+- Windows keeps showing its own banner too, unless you turn banners off: click **Windows banners** in the same place (or open Windows **Settings > System > Notifications**) and turn off **Show notification banners** for the apps you want in the notch only. Notifications still go to Notification Center as usual.
+- **Click** a notification (or **Open**) to open the app that sent it. **Mute app** stops that app's notifications appearing in the notch; **Unmute** in Settings brings them all back. Buttons inside a notification (Reply, Accept) only work in Windows' own banner.
+- **Include message text** off shows only the app's name, handy if you share your screen.
+- Nothing shows while **Do Not Disturb** is on, and a notification that arrives during a full-screen game or video waits until you're back (several at once show as the newest one, "+2 more").
+- How it works: WindyLand asks Windows for the notifications in Notification Center, the same permission other notification tools use (Windows **Settings > Privacy & security > Notifications**). It checks only when Windows records a new one. Nothing is stored or sent anywhere.
+
 ## Alerts and overlays
 
 <img src="images/alerts.png" alt="Alerts">
@@ -134,31 +171,43 @@ The notch briefly drops down for:
 - charger connected or unplugged, low battery (20%), critical battery (10%) and fully charged
 - internet connected, no internet access, or disconnected
 - Caps Lock on or off, and keyboard language changes
-- volume changes (turn off with **Volume overlay** in the menu)
+- volume changes (turn off with **Volume overlay** in Settings)
 - Bluetooth devices connecting or disconnecting
 
 ## The mascot
 
 <img src="images/mascot.png" alt="Mascot">
 
-In the **Full** style, after a while with nothing going on, the clock turns into a pair of eyes that follow your mouse. After two minutes away they doze off, and they wave when you come back. Turn this off with **Personality** in the menu.
+In the **Full** style, after a while with nothing going on, the clock turns into a little companion that follows your mouse with its eyes. After two minutes away it dozes off, and it waves when you come back.
+
+Pick one in **Settings > Mascot**: Eyes, Cat, Ghost, Robot, Sparky (an electric hamster), Sprout (a tiny tree), Owl or Panda. Hover a tile to see it wave. **Clock** turns the mascot off.
 
 ## Settings and your data
 
-Right-click the notch or the tray icon:
+<img src="images/settings.png" alt="Settings">
+
+<img src="images/settings-privacy.png" alt="Privacy and alerts">
+
+Open Settings with the **gear** at the end of the tab bar, a plain **right-click** on the notch, or a **left-click** on the tray icon. The notch opens into a large settings panel. Style, position, mascot and sound are on the left; the right side has two pages, **General** and **Privacy & alerts**:
 
 | Item | What it does |
 |---|---|
-| Start with Windows | Launch at sign-in |
 | Notch style | Full, Compact, Pill or Hidden |
-| Position | Top, Bottom, Left, Right, Center on edge |
-| Personality | Mascot eyes on or off |
+| Position | Top, Bottom, Left, Right, Center |
+| Mascot | Which companion shows when idle, or Clock for none |
+| Sound for reminders | Chime, Bell, Pop, Marimba, Windows (your system sound) or Off; picking one plays it |
+| **General** page: Start with Windows | Launch at sign-in |
 | Volume overlay | Show volume changes |
 | Check for updates | Looks for a newer version now |
 | Open data folder | Opens `%APPDATA%\WindyLand` |
-| About / Exit | |
+| GitHub page / Quit WindyLand | |
+| **Privacy & alerts** page: Windows notifications | Show them in the notch, include message text, Windows banners, unmute apps |
+| Mic & camera dots | Dots while the mic or camera is in use |
+| Clipboard history | Record on/off, and Text, Text + files or Everything |
 
-Everything is stored as plain text in `%APPDATA%\WindyLand` (`settings.txt`, `todo.txt`, `water.txt`, `shelf.txt`). Uninstalling from **Settings > Apps** asks whether to delete it too.
+Right-clicking the tray icon shows a short menu: Settings, Welcome tour, Check for updates, About and Exit. Resting the mouse on any icon button shows what it does.
+
+Everything is stored as plain text in `%APPDATA%\WindyLand` (`settings.txt`, `todo.txt`, `water.txt`, `shelf.txt`, `clipboard.txt`). Uninstalling from **Settings > Apps** asks whether to delete it too.
 
 ## Updates
 
@@ -168,12 +217,12 @@ WindyLand checks GitHub for a new version shortly after it starts and then twice
 - **Later** asks again at the next check.
 - **Skip** ignores that version (newer ones are still offered).
 
-To check yourself, right-click and choose **Check for updates**. The check only asks GitHub for the latest release number; nothing about you is sent.
+To check yourself, open Settings and click **Check for updates**. The check only asks GitHub for the latest release number; nothing about you is sent. If GitHub is busy or you're offline, it tries again within the hour. Before running a downloaded update, WindyLand checks it against the fingerprint (SHA-256) GitHub publishes for it.
 
 ## Troubleshooting
 
 - **Nothing in Now playing.** Make sure the player shows up in the Windows media overlay (press a media key and look at the volume flyout).
-- **The notch disappeared.** It hides while a full-screen game, video or presentation is running.
+- **The notch disappeared.** It hides while a full-screen game, video or presentation is running, and comes back as soon as you leave it. Reminders that arrive meanwhile wait and show (with their sound) when it returns.
 - **It opens when I reach for my tabs.** Switch to the Compact, Pill or Hidden style, or move it to another edge.
 - **Found a bug or have an idea?** Open an [issue](https://github.com/shabab239/WindyLand/issues/new/choose); the form asks for what helps.
 - **Lyrics not available.** The song is not on LRCLIB yet, or the title from the player is too unusual to match.

@@ -14,15 +14,25 @@ use crate::store::Settings;
 use crate::time::Now;
 use crate::ui::Ui;
 
+pub mod clipboard;
 pub mod example;
 pub mod music;
+pub mod notifs;
 pub mod pomodoro;
+pub mod privacy;
 pub mod shelf;
 pub mod system;
 pub mod timer;
 pub mod todo;
 pub mod update;
 pub mod water;
+
+/// Every tab opens to this one panel size (content area, DIPs), so the tab
+/// bar and buttons stay put while switching. A module's `size()` is its
+/// natural content size, centred inside the panel; return the full panel
+/// height for lists that should fill it. Only a deliberately wider view
+/// (Music with lyrics) may exceed the panel width.
+pub const PANEL: (f32, f32) = (520.0, 176.0);
 
 /// Every module, in tab order. Modules with `has_tab() == false` run in the
 /// background (e.g. `system`, which only pops toasts).
@@ -34,7 +44,10 @@ pub fn all(hwnd: HWND) -> Vec<Box<dyn Module>> {
         Box::new(water::Water::load()),
         Box::new(todo::Todo::load()),
         Box::new(shelf::Shelf::load()),
+        Box::new(clipboard::Clipboard::new(hwnd)),
         Box::new(system::System::new(hwnd)),
+        Box::new(privacy::Privacy::new()),
+        Box::new(notifs::Notifs::new(hwnd)),
         Box::new(update::Updater::new(hwnd)),
         // Box::new(example::Example::default()),
     ]
@@ -57,6 +70,11 @@ pub struct Toast {
     pub actions: Vec<(String, u32)>,
     pub secs: f32,
     pub chime: bool,
+    /// Picture shown instead of the icon glyph (premultiplied BGRA, square),
+    /// e.g. the app icon of a Windows notification.
+    pub image: Option<std::sync::Arc<(u32, u32, Vec<u8>)>>,
+    /// Action sent when the toast itself (not a button) is clicked.
+    pub click: Option<u32>,
     /// Filled in by `Ctx::toast`.
     pub module: usize,
 }
@@ -74,6 +92,8 @@ impl Toast {
             actions: Vec::new(),
             secs: 3.0,
             chime: false,
+            image: None,
+            click: None,
             module: 0,
         }
     }
@@ -97,12 +117,22 @@ impl Toast {
         self.chime = true;
         self
     }
+    pub fn image(mut self, img: std::sync::Arc<(u32, u32, Vec<u8>)>) -> Self {
+        self.image = Some(img);
+        self
+    }
+    pub fn click(mut self, id: u32) -> Self {
+        self.click = Some(id);
+        self
+    }
 }
 
 /// What a module can ask of the app while handling a call.
 pub struct Ctx<'a> {
     pub now: Now,
     pub hwnd: HWND,
+    /// The notch is hidden (a full-screen app is in front).
+    pub hidden: bool,
     pub settings: &'a mut Settings,
     pub(crate) module: usize,
     pub(crate) toasts: &'a mut Vec<Toast>,
@@ -141,9 +171,18 @@ pub trait Module {
     fn has_tab(&self) -> bool {
         true
     }
-    /// Content size (DIPs) of this module's expanded panel, below the tab bar.
+    /// Natural content size (DIPs) below the tab bar; centred in `PANEL`.
     fn size(&self) -> (f32, f32) {
         (440.0, 150.0)
+    }
+    /// Colour of this tab's highlight glow when you switch to it.
+    fn accent(&self) -> Color {
+        crate::gfx::col::ACCENT
+    }
+    /// A privacy dot to show on the notch while something is active
+    /// (e.g. orange while the microphone is in use), or None.
+    fn indicator(&self) -> Vec<Color> {
+        Vec::new()
     }
     /// Called once a second, and right after background threads wake the app.
     fn tick(&mut self, ctx: &mut Ctx) {}

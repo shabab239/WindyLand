@@ -6,3 +6,4 @@ selftest.txt
 .idea/
 .vscode/
 *.iml
+__pycache__/

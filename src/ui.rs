@@ -13,6 +13,8 @@ pub struct Hit {
     pub rect: Rect,
     pub module: usize,
     pub id: u32,
+    /// Tooltip shown when the mouse rests on the hit ("" = none).
+    pub tip: &'static str,
 }
 
 pub struct Ui<'a> {
@@ -40,7 +42,12 @@ impl<'a> DerefMut for Ui<'a> {
 
 impl<'a> Ui<'a> {
     pub fn hit(&mut self, r: Rect, id: u32) {
-        self.hits.push(Hit { rect: r, module: self.module, id });
+        self.hit_tip(r, id, "");
+    }
+
+    /// Clickable area with a tooltip that appears when the mouse rests on it.
+    pub fn hit_tip(&mut self, r: Rect, id: u32, tip: &'static str) {
+        self.hits.push(Hit { rect: r, module: self.module, id, tip });
     }
 
     pub fn hovered(&self, r: Rect) -> bool {
@@ -82,8 +89,9 @@ impl<'a> Ui<'a> {
         self.hit(r, id);
     }
 
-    /// Round icon button. `bg = None` draws only a hover circle.
-    pub fn icon_btn(&mut self, r: Rect, g: &str, id: u32, size: f32, fg: Color, bg: Option<Color>) {
+    /// Round icon button. `bg = None` draws only a hover circle. `tip` is the
+    /// tooltip shown on hover; icon-only buttons should always have one.
+    pub fn icon_btn(&mut self, r: Rect, g: &str, id: u32, size: f32, fg: Color, bg: Option<Color>, tip: &'static str) {
         let hov = self.hovered(r);
         let rad = r.w.min(r.h) / 2.0;
         match bg {
@@ -92,7 +100,7 @@ impl<'a> Ui<'a> {
             None => {}
         }
         self.icon(g, r, size, fg);
-        self.hit(r, id);
+        self.hit_tip(r, id, tip);
     }
 
     /// Thin progress bar. Registers a hit if `id` is given (for seek bars:
@@ -109,6 +117,20 @@ impl<'a> Ui<'a> {
         if let Some(id) = id {
             self.hit(r.inset_xy(0.0, -6.0), id);
         }
+    }
+
+    /// Label on the left, on/off switch on the right; the whole row is clickable.
+    pub fn toggle(&mut self, r: Rect, label: &str, on: bool, id: u32, accent: Color) {
+        if self.hovered(r) {
+            self.fill_rr(r, 8.0, col::TEXT.with_a(0.05));
+        }
+        let mut row = r.inset_xy(8.0, 0.0);
+        let sw = row.cut_right(34.0, 8.0).centered(34.0, 18.0);
+        self.text(label, row, 12.5, col::TEXT, Weight::Regular, Align::Left);
+        self.fill_rr(sw, 9.0, if on { accent } else { col::TEXT.with_a(0.18) });
+        let kx = if on { sw.r() - 9.0 } else { sw.x + 9.0 };
+        self.circle(kx, sw.cy(), 7.0, if on { hex(0x000000) } else { col::TEXT });
+        self.hit(r, id);
     }
 
     /// Circular checkbox.

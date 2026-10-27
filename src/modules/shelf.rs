@@ -84,6 +84,9 @@ impl Module for Shelf {
     fn title(&self) -> &'static str {
         "Shelf"
     }
+    fn accent(&self) -> Color {
+        col::PURPLE
+    }
     fn icon(&self) -> &'static str {
         glyph::SHELF
     }
@@ -155,7 +158,7 @@ impl Module for Shelf {
             ui.hit(tile, iid(K_OPEN, i));
             if hov {
                 let x = Rect::new(tile.r() - 24.0, tile.y + 4.0, 20.0, 20.0);
-                ui.icon_btn(x, glyph::CLOSE, iid(K_REMOVE, i), 9.0, col::DIM, Some(hex(0x2A2A2E)));
+                ui.icon_btn(x, glyph::CLOSE, iid(K_REMOVE, i), 9.0, col::DIM, Some(hex(0x2A2A2E)), "Remove from shelf");
             }
         }
         ui.pop_clip();
