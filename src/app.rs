@@ -93,6 +93,7 @@ const S_NOTIF_BANNERS: u32 = 102;
 const S_NOTIF_UNMUTE: u32 = 103;
 const S_POLICY: u32 = 104;
 const S_MASCOT_ALWAYS: u32 = 105;
+const S_UPDATE_AUTO: u32 = 109;
 const S_MASCOT_POS: u32 = 106; // + 0 left, 1 centre, 2 right
 const S_PANEL: u32 = 120; // + module index
 /// Hit id of a toast's body (clicking the toast itself, not a button).
@@ -1314,7 +1315,8 @@ impl App {
         };
         if page == 0 {
             ui.toggle(right.cut_top(26.0, 2.0), "Start with Windows", startup, S_STARTUP, accent);
-            ui.toggle(right.cut_top(26.0, 12.0), "Volume overlay", st.volume_overlay, S_VOLUME, accent);
+            ui.toggle(right.cut_top(26.0, 2.0), "Volume overlay", st.volume_overlay, S_VOLUME, accent);
+            ui.toggle(right.cut_top(26.0, 12.0), "Check for updates automatically", st.update_check, S_UPDATE_AUTO, accent);
             let (a, b) = half(&mut right, 6.0);
             ui.button(a, if checking { "Checking..." } else { "Check for updates" }, S_UPDATES);
             ui.button(b, "Open data folder", S_DATA);
@@ -1380,6 +1382,7 @@ impl App {
                 self.startup_cache = tray::startup_enabled();
             }
             S_VOLUME => self.settings.volume_overlay = !self.settings.volume_overlay,
+            S_UPDATE_AUTO => self.settings.update_check = !self.settings.update_check,
             S_PRIVACY => self.settings.privacy_dots = !self.settings.privacy_dots,
             i if (S_SOUND..S_SOUND + Sound::ALL.len() as u32).contains(&i) => {
                 let s = Sound::ALL[(i - S_SOUND) as usize];
@@ -3029,7 +3032,7 @@ pub fn selftest() -> String {
                     tight.push(s);
                 }
             }
-            for s in ["Start with Windows", "Volume overlay", "Mic & camera dots", "Record what I copy", "Show them in the notch", "Include message text"] {
+            for s in ["Start with Windows", "Volume overlay", "Check for updates automatically", "Mic & camera dots", "Record what I copy", "Show them in the notch", "Include message text"] {
                 if a.gfx.measure(s, 12.5, Weight::Regular) > right_w - 16.0 - 42.0 {
                     tight.push(s);
                 }
@@ -3085,6 +3088,13 @@ pub fn selftest() -> String {
             a.settings.save();
             let ok = click(a, S_VOLUME) && click(a, S_VOLUME);
             out += &format!("{:<4} settings switches respond\n", if ok { "OK" } else { "FAIL" });
+            let ok = a.settings.update_check
+                && click(a, S_UPDATE_AUTO)
+                && !a.settings.update_check
+                && crate::store::read("settings.txt").lines().any(|l| l.trim() == "update_check=0")
+                && click(a, S_UPDATE_AUTO)
+                && a.settings.update_check;
+            out += &format!("{:<4} automatic update checks can be turned off (on by default) and it saves\n", if ok { "OK" } else { "FAIL" });
             let bell = S_SOUND + Sound::ALL.iter().position(|s| *s == Sound::Bell).unwrap_or(0) as u32;
             let ok = click(a, bell) && a.settings.sound == Sound::Bell && crate::store::read("settings.txt").contains("sound=bell");
             out += &format!("{:<4} picking a sound applies and saves\n", if ok { "OK" } else { "FAIL" });

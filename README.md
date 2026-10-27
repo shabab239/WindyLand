@@ -59,6 +59,15 @@ the look, and later versions install with one click from the notch.
 **Quick start:** hover the notch to open it, right-click it for settings,
 right-click and drag to move it. See the **[User guide](docs/USER_GUIDE.md)**.
 
+**"Smart App Control blocked an app"?** Releases aren't code signed yet (see
+[Code signing policy](#code-signing-policy)), and Windows 11's Smart App
+Control blocks unsigned apps with no way to allow just one. Until signed
+releases are out, the only way to install on such a PC is to turn Smart App
+Control off in Windows Security > App & browser control. Note that on many
+Windows versions it can't be turned back on without resetting Windows. The
+blue "Windows protected your PC" screen is different: click **More info** >
+**Run anyway**.
+
 ## Build
 
 Needs Rust (stable, GNU or MSVC toolchain).
@@ -69,6 +78,30 @@ cargo build --release                       # target\release\windyland.exe
 .\build.ps1                                 # build + icon + self-test + installer (Inno Setup 6)
 python docs\tools\make_images.py            # regenerate the screenshots and demo (Pillow, numpy, ffmpeg)
 ```
+
+Releases are built by GitHub Actions from the version tag
+(`.github/workflows/release.yml`).
+
+## Code signing policy
+
+Windows releases are being set up for free code signing provided by
+[SignPath.io](https://about.signpath.io), certificate by
+[SignPath Foundation](https://signpath.org). Signed releases start with the
+first release after the project is accepted; until then installers are
+unsigned.
+
+- Only files built by this repository's GitHub Actions release workflow from
+  its own source code are signed. Nothing built elsewhere is signed.
+- Committers and reviewers: [Shabab](https://github.com/shabab239)
+  (maintainer). Changes from others come in as pull requests and are reviewed
+  before merging.
+- Approvers: [Shabab](https://github.com/shabab239). Every signing request is
+  approved by hand.
+- Privacy: this program will not transfer any information to other networked
+  systems unless specifically requested by the user or the person installing
+  or operating it. The only online features (lyrics, and update checks that
+  can be turned off in the installer or Settings) are described in the
+  [privacy policy](PRIVACY.md).
 
 ## Adding a feature
 

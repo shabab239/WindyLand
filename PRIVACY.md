@@ -52,6 +52,9 @@ information to either:
 2. **GitHub** (updates), shortly after start and about twice a day: it asks
    for the latest release number, and when you click **Update**, downloads
    the installer. GitHub's privacy statement applies to those requests.
+   The automatic checks can be turned off in the installer ("Check for
+   updates automatically") or in Settings > General; **Check for updates**
+   still works when you click it.
 
 Like any internet request, these services can see your IP address.
 WindyLand sends no identifiers, cookies or usage data with them.

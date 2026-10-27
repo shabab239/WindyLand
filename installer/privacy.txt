@@ -1,0 +1,21 @@
+WindyLand and your privacy
+
+WindyLand runs on your PC and keeps your data there, in plain text files in
+%APPDATA%\WindyLand. It has no account, no telemetry, no ads and no
+tracking.
+
+It goes online for only two things, and sends no personal information:
+
+  - Lyrics (LRCLIB, lrclib.net): only while you have the lyrics view open,
+    it sends the title, artist, album and length of the song that's playing
+    so it can find matching lyrics.
+
+  - Updates (GitHub): about twice a day it asks GitHub for the latest version
+    number. You can turn this off on the next page, or later in
+    Settings > General > Check for updates automatically.
+
+Windows notifications in the notch and clipboard history are off until you
+turn them on, and are read on your PC only.
+
+Full privacy policy:
+https://github.com/shabab239/WindyLand/blob/main/PRIVACY.md

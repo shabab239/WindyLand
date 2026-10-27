@@ -287,7 +287,9 @@ impl Module for Updater {
         if crate::time::demo() {
             return;
         }
-        if unix_now() >= self.next_check && unix_now() - self.started >= FIRST_CHECK_AFTER {
+        // Automatic checks only when allowed (Settings > General, or the
+        // installer's "Check for updates automatically" box).
+        if ctx.settings.update_check && unix_now() >= self.next_check && unix_now() - self.started >= FIRST_CHECK_AFTER {
             self.check(false);
         }
         let state = self.state.lock().unwrap().clone();

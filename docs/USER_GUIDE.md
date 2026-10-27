@@ -215,6 +215,7 @@ Open Settings with the **gear** at the end of the tab bar, a plain **right-click
 | **General** page: Start with Windows | Launch at sign-in |
 | Volume overlay | Show volume changes |
 | Check for updates | Looks for a newer version now |
+| Check for updates automatically | Asks GitHub for the latest version about twice a day. On by default; also offered by the installer |
 | Open data folder | Opens `%APPDATA%\WindyLand` |
 | GitHub page / Privacy policy / Quit WindyLand | The privacy policy is [PRIVACY.md](../PRIVACY.md) |
 | **Privacy** page: Windows notifications | Show them in the notch, include message text, Windows banners, unmute apps |

@@ -1,5 +1,19 @@
 # Changelog
 
+## Unreleased
+
+- Preparing for code signing (SignPath Foundation), so Windows 11's Smart App
+  Control stops blocking WindyLand once releases are signed:
+  - Releases are built by GitHub Actions from the version tag
+    (`.github/workflows/release.yml`), as a draft release to check and
+    publish.
+  - `windyland.exe` and the installer carry version info (product name and
+    version).
+  - The installer shows a short privacy summary and has a "Check for updates
+    automatically" option; the same switch is in Settings > General.
+  - README: code signing policy, and what to do about Smart App Control for
+    now.
+
 ## 0.1.18
 
 - Windows notifications in the notch (opt-in: Settings > Privacy).

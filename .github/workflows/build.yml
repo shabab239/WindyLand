@@ -20,7 +20,8 @@ jobs:
           $env:WINDYLAND_DATA_DIR = "$env:RUNNER_TEMP\wl"
           $env:WINDYLAND_SELFTEST_OUT = "$env:RUNNER_TEMP\selftest.txt"
           Start-Process .\target\release\windyland.exe -ArgumentList '--selftest' -Wait
-          Get-Content $env:WINDYLAND_SELFTEST_OUT
+          # FAIL lines become annotations, readable on the run's summary page.
+          Get-Content $env:WINDYLAND_SELFTEST_OUT | ForEach-Object { if ($_ -like 'FAIL*') { Write-Host "::error::$_" } else { Write-Host $_ } }
           if (Select-String -Path $env:WINDYLAND_SELFTEST_OUT -Pattern '^FAIL' -Quiet) { exit 1 }
       - uses: actions/upload-artifact@v4
         with:
