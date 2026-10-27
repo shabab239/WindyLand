@@ -109,6 +109,7 @@ pub struct Clipboard {
     /// Image thumbnails as GPU bitmaps: entry id -> (render-target generation, bitmap).
     thumbs: HashMap<u32, (u32, ID2D1Bitmap)>,
     scroll: f32,
+    max_scroll: f32,
     /// Entry id just copied back, and when (for the "Copied" label).
     copied: Option<(u32, f64)>,
 }
@@ -127,6 +128,7 @@ impl Clipboard {
             mode: mode.clone(),
             thumbs: HashMap::new(),
             scroll: 0.0,
+            max_scroll: 0.0,
             copied: None,
         };
         c.load();
@@ -259,8 +261,9 @@ impl Module for Clipboard {
     }
 
     fn tick(&mut self, ctx: &mut Ctx) {
-        // Mirror the settings for the listener thread.
-        self.on.store(ctx.settings.clip_on, Ordering::Relaxed);
+        // Mirror the settings for the listener thread (off too while the
+        // Clipboard panel is hidden in Settings > Panels).
+        self.on.store(ctx.settings.clip_on && !ctx.settings.panel_hidden("Clipboard"), Ordering::Relaxed);
         self.mode.store(mode_byte(ctx.settings.clip_mode), Ordering::Relaxed);
         let new: Vec<Content> = std::mem::take(&mut *self.incoming.lock().unwrap());
         for c in new {
@@ -301,6 +304,7 @@ impl Module for Clipboard {
         let order = self.order();
         let max_scroll = (order.len() as f32 * ROW_H - r.h).max(0.0);
         self.scroll = self.scroll.clamp(0.0, max_scroll);
+        self.max_scroll = max_scroll;
         let now = unix_now();
         ui.push_clip(r);
         for (i, e) in order.iter().enumerate() {
@@ -367,8 +371,12 @@ impl Module for Clipboard {
         ui.pop_clip();
     }
 
-    fn scroll(&mut self, delta: f32) {
+    fn scroll(&mut self, delta: f32) -> bool {
+        if self.max_scroll < 1.0 {
+            return false;
+        }
         self.scroll -= delta * ROW_H;
+        true
     }
 
     fn action(&mut self, id: u32, _rel: Rel, ctx: &mut Ctx) {

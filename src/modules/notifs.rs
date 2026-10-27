@@ -15,12 +15,11 @@
 //! unless the user turns banners off; Settings links to that page.
 
 use std::collections::HashSet;
-use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicU8, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use windows::core::*;
-use windows::Foundation::Size;
 use windows::UI::Notifications::Management::*;
 use windows::UI::Notifications::*;
 use windows::Win32::Foundation::*;
@@ -36,6 +35,13 @@ use crate::modules::{Ctx, Module, Rel, Toast};
 pub static ON: AtomicBool = AtomicBool::new(false);
 /// Listener access: 0 unknown, 1 allowed, 2 denied by Windows' privacy settings.
 pub static ACCESS: AtomicU8 = AtomicU8::new(0);
+/// Watchdog: the watcher stamps this (unix seconds) on every pass. If it
+/// goes stale, a call into Windows has hung; the module starts a fresh
+/// watcher and bumps GEN so the stuck one quits if it ever returns.
+static BEAT: AtomicU64 = AtomicU64::new(0);
+static GEN: AtomicU32 = AtomicU32::new(0);
+/// Self-test override for `quiet()`: 0 real state, 1 quiet, 2 not quiet.
+pub static QUIET_OVERRIDE: AtomicU8 = AtomicU8::new(0);
 
 pub const A_OPEN: u32 = 1;
 pub const A_MUTE: u32 = 2;
@@ -68,8 +74,6 @@ pub struct Notifs {
     told_denied: bool,
     /// The note in the last toast (what Open/Mute act on).
     shown: Option<Note>,
-    /// Notes skipped because of Do Not Disturb (for the self-test).
-    pub quiet_skipped: u32,
     /// Notes that arrived while the notch was hidden (full-screen app),
     /// shown together when it's back.
     backlog: Vec<Note>,
@@ -77,7 +81,7 @@ pub struct Notifs {
 
 impl Notifs {
     pub fn new(hwnd: HWND) -> Notifs {
-        Notifs { hwnd: hwnd.0 as isize, inbox: Arc::default(), started: false, was_on: None, told_denied: false, shown: None, quiet_skipped: 0, backlog: Vec::new() }
+        Notifs { hwnd: hwnd.0 as isize, inbox: Arc::default(), started: false, was_on: None, told_denied: false, shown: None, backlog: Vec::new() }
     }
 
     /// Feed a note as if the watcher had found it (self-test, docs).
@@ -112,6 +116,11 @@ pub fn toast_text(n: &Note, show_text: bool) -> (String, String) {
 /// through SHQueryUserNotificationState.
 pub fn quiet() -> bool {
     use windows::Win32::UI::Shell::{SHQueryUserNotificationState, QUNS_QUIET_TIME};
+    match QUIET_OVERRIDE.load(Ordering::Relaxed) {
+        1 => return true,
+        2 => return false,
+        _ => {}
+    }
     if unsafe { matches!(SHQueryUserNotificationState(), Ok(QUNS_QUIET_TIME)) } {
         return true;
     }
@@ -203,18 +212,19 @@ fn filetime_now() -> i64 {
 }
 
 /// Read everything WindyLand shows from one notification.
-fn read_note(n: &UserNotification) -> Note {
+pub fn read_note(n: &UserNotification) -> Note {
     let mut note = Note { id: n.Id().unwrap_or(0), ..Default::default() };
     if let Ok(info) = n.AppInfo() {
         note.aumid = info.AppUserModelId().map(|s| s.to_string()).unwrap_or_default();
         if let Ok(d) = info.DisplayInfo() {
             note.app = d.DisplayName().map(|s| s.to_string()).unwrap_or_default();
-            let logo = d.GetLogo(Size { Width: 64.0, Height: 64.0 }).ok();
-            let bytes = logo.and_then(|r| r.cast().ok()).and_then(|r| unsafe { crate::modules::music::read_stream_bytes(&r) });
-            if let Some(img) = bytes.and_then(|b| unsafe { crate::modules::music::decode_square(&b, 64) }) {
-                note.color = icon_color(&img.2);
-                note.icon = Some(Arc::new(img));
-            }
+        }
+        // Never use DisplayInfo.GetLogo(): for packaged apps (WhatsApp,
+        // Snipping Tool...) reading its stream blocks forever, which froze
+        // this thread. Ask the shell for the app's Start icon instead.
+        if let Some(img) = app_icon(&note.aumid) {
+            note.color = icon_color(&img.2);
+            note.icon = Some(img);
         }
     }
     let texts: Vec<String> = n
@@ -230,8 +240,65 @@ fn read_note(n: &UserNotification) -> Note {
     note
 }
 
+/// The icon Windows shows for an app in Start, looked up by its
+/// AppUserModelID through the shell (`shell:AppsFolder\\<id>`). Works for
+/// packaged apps (WhatsApp) and desktop apps (Edge, PowerShell) alike, and
+/// returns 64 px premultiplied BGRA. Cached per app, misses included.
+pub fn app_icon(aumid: &str) -> Option<Arc<(u32, u32, Vec<u8>)>> {
+    use std::collections::HashMap;
+    static CACHE: std::sync::OnceLock<Mutex<HashMap<String, Option<Arc<(u32, u32, Vec<u8>)>>>>> = std::sync::OnceLock::new();
+    let cache = CACHE.get_or_init(Default::default);
+    if aumid.is_empty() {
+        return None;
+    }
+    if let Some(hit) = cache.lock().unwrap().get(aumid) {
+        return hit.clone();
+    }
+    let icon = unsafe { shell_icon(aumid, 64) }.map(Arc::new);
+    cache.lock().unwrap().insert(aumid.to_string(), icon.clone());
+    icon
+}
+
+unsafe fn shell_icon(aumid: &str, side: i32) -> Option<(u32, u32, Vec<u8>)> {
+    use windows::Win32::Foundation::SIZE;
+    use windows::Win32::Graphics::Gdi::*;
+    use windows::Win32::UI::Shell::*;
+    let name = HSTRING::from(format!("shell:AppsFolder\\{aumid}"));
+    let f: IShellItemImageFactory = SHCreateItemFromParsingName(&name, None).ok()?;
+    let hbm = f.GetImage(SIZE { cx: side, cy: side }, SIIGBF_ICONONLY | SIIGBF_BIGGERSIZEOK).ok()?;
+    let mut bmp = BITMAP::default();
+    GetObjectW(hbm, std::mem::size_of::<BITMAP>() as i32, Some(&mut bmp as *mut _ as *mut _));
+    let (w, h) = (bmp.bmWidth, bmp.bmHeight);
+    let mut px = vec![0u8; (w * h * 4).max(0) as usize];
+    let mut bi = BITMAPINFO::default();
+    bi.bmiHeader = BITMAPINFOHEADER { biSize: std::mem::size_of::<BITMAPINFOHEADER>() as u32, biWidth: w, biHeight: -h, biPlanes: 1, biBitCount: 32, ..Default::default() };
+    let dc = GetDC(None);
+    let rows = GetDIBits(dc, hbm, 0, h as u32, Some(px.as_mut_ptr() as *mut _), &mut bi, DIB_RGB_COLORS);
+    ReleaseDC(None, dc);
+    let _ = DeleteObject(hbm);
+    if rows == 0 || w <= 0 || h <= 0 || !px.chunks_exact(4).any(|p| p[3] > 0) {
+        return None;
+    }
+    // The shell hands back premultiplied BGRA already; scale to `side`.
+    if w as i32 != side || h as i32 != side {
+        px = resize_nearest(&px, w as usize, h as usize, side as usize);
+    }
+    Some((side as u32, side as u32, px))
+}
+
+fn resize_nearest(px: &[u8], w: usize, h: usize, side: usize) -> Vec<u8> {
+    let mut out = vec![0u8; side * side * 4];
+    for y in 0..side {
+        for x in 0..side {
+            let (sx, sy) = (x * w / side, y * h / side);
+            out[(y * side + x) * 4..][..4].copy_from_slice(&px[(sy * w + sx) * 4..][..4]);
+        }
+    }
+    out
+}
+
 /// The watcher thread (see the module docs).
-fn watch(inbox: Arc<Mutex<Vec<Note>>>, hwnd: isize) {
+fn watch(inbox: Arc<Mutex<Vec<Note>>>, hwnd: isize, gen: u32) {
     unsafe {
         let _ = CoInitializeEx(None, COINIT_MULTITHREADED);
     }
@@ -243,6 +310,10 @@ fn watch(inbox: Arc<Mutex<Vec<Note>>>, hwnd: isize) {
     let mut last_read = Instant::now() - Duration::from_secs(60);
     loop {
         std::thread::sleep(Duration::from_millis(400));
+        if GEN.load(Ordering::Relaxed) != gen {
+            return;
+        }
+        BEAT.store(crate::time::unix_now() as u64, Ordering::Relaxed);
         if !ON.load(Ordering::Relaxed) {
             // Turned off: forget what we saw, so turning it back on never
             // replays old notifications.
@@ -284,6 +355,13 @@ fn watch(inbox: Arc<Mutex<Vec<Note>>>, hwnd: isize) {
             .filter(|n| n.CreationTime().map_or(true, |t| now - t.UniversalTime < 60 * 10_000_000))
             .map(read_note)
             .collect();
+        crate::app::dlog(format!(
+            "notif: {} in center, new ids {:?}, {} recent: {:?}",
+            ids.len(),
+            ids.difference(&old).collect::<Vec<_>>(),
+            fresh.len(),
+            fresh.iter().map(|n| n.app.as_str()).collect::<Vec<_>>()
+        ));
         if fresh.is_empty() {
             continue;
         }
@@ -305,10 +383,16 @@ impl Module for Notifs {
     fn tick(&mut self, ctx: &mut Ctx) {
         let on = ctx.settings.notif_on && !crate::time::demo();
         ON.store(on, Ordering::Relaxed);
-        if on && !self.started {
+        let stuck = self.started && crate::time::unix_now() as u64 > BEAT.load(Ordering::Relaxed) + 30;
+        if on && (!self.started || stuck) {
+            if stuck {
+                crate::app::dlog("notif: watcher stopped responding, starting a new one");
+            }
             self.started = true;
+            BEAT.store(crate::time::unix_now() as u64, Ordering::Relaxed);
+            let gen = GEN.fetch_add(1, Ordering::Relaxed) + 1;
             let (inbox, hwnd) = (self.inbox.clone(), self.hwnd);
-            std::thread::spawn(move || watch(inbox, hwnd));
+            std::thread::spawn(move || watch(inbox, hwnd, gen));
         }
         // Just turned on: Windows keeps showing its own banners unless the
         // user switches them off, so offer the way there once.
@@ -336,10 +420,18 @@ impl Module for Notifs {
             self.backlog.clear();
             return;
         }
-        // Hold them while a full-screen app hides the notch, then show the
-        // newest with a count of the rest.
+        // Hold them while a full-screen app hides the notch or Do Not
+        // Disturb / focus is on (Windows 11 also turns focus on by itself
+        // during games and full-screen apps), then show the newest with a
+        // count of the rest. Never drop them.
         self.backlog.extend(notes);
-        if !ctx.hidden {
+        let keep = self.backlog.len().saturating_sub(50);
+        self.backlog.drain(..keep);
+        let quiet_now = !self.backlog.is_empty() && quiet();
+        if !self.backlog.is_empty() && quiet_now {
+            crate::app::dlog(format!("notif: Do Not Disturb, holding {}", self.backlog.len()));
+        }
+        if !ctx.hidden && !quiet_now {
             let all = std::mem::take(&mut self.backlog);
             self.show(all, ctx);
         }
@@ -355,7 +447,7 @@ impl Module for Notifs {
 }
 
 impl Notifs {
-    /// Toast the newest of `notes` (muted apps and Do Not Disturb respected).
+    /// Toast the newest of `notes` (muted apps dropped).
     fn show(&mut self, notes: Vec<Note>, ctx: &mut Ctx) {
         if notes.is_empty() {
             return;
@@ -363,10 +455,7 @@ impl Notifs {
         let muted = muted(&ctx.settings.extra);
         let notes: Vec<Note> = notes.into_iter().filter(|n| !muted.contains(&n.aumid)).collect();
         if notes.is_empty() {
-            return;
-        }
-        if quiet() {
-            self.quiet_skipped += notes.len() as u32;
+            crate::app::dlog("notif: all muted");
             return;
         }
         // Several at once (e.g. after a full-screen game): show the newest,
@@ -405,7 +494,7 @@ impl Notifs {
                     }
                     ctx.settings.extra.insert(MUTED_KEY.into(), m.join("|"));
                     ctx.settings.save();
-                    ctx.toast(Toast::new("notif", glyph::MUTE, col::DIM, format!("{} muted", n.app), "Unmute in Settings > Privacy & alerts").secs(4.0));
+                    ctx.toast(Toast::new("notif", glyph::MUTE, col::DIM, format!("{} muted", n.app), "Unmute in Settings > Privacy").secs(4.0));
                 }
             }
             A_BANNERS => open_uri(w!("ms-settings:notifications")),

@@ -286,6 +286,12 @@ pub struct Settings {
     pub onboarded: bool,
     /// Sound for reminders and alerts.
     pub sound: Sound,
+    /// Show the mascot all the time (Full style), not only when idle.
+    pub mascot_always: bool,
+    /// Where the mascot sits in the notch: 0 left, 1 centre, 2 right.
+    pub mascot_pos: u8,
+    /// Panels turned off in Settings > Panels (module titles).
+    pub hidden_panels: Vec<String>,
     /// Show other apps' Windows notifications in the notch (opt-in).
     pub notif_on: bool,
     /// Include the message text (off: only the app name shows).
@@ -294,6 +300,11 @@ pub struct Settings {
 }
 
 impl Settings {
+    /// The panel with this title was turned off in Settings > Panels.
+    pub fn panel_hidden(&self, title: &str) -> bool {
+        self.hidden_panels.iter().any(|t| t == title)
+    }
+
     pub fn load() -> Settings {
         let kv = parse_kv(&read("settings.txt"));
         let b = |k: &str, d: bool| kv.get(k).map(|v| v == "1" || v == "true").unwrap_or(d);
@@ -319,6 +330,9 @@ impl Settings {
             // people updating from a version that didn't have it.
             onboarded: kv.get("onboarded").map_or(false, |v| v == "1"),
             sound: kv.get("sound").and_then(|s| Sound::from_key(s)).unwrap_or(Sound::Chime),
+            mascot_always: kv.get("mascot_always").map_or(false, |v| v == "1"),
+            mascot_pos: kv.get("mascot_pos").and_then(|v| v.parse().ok()).filter(|p| *p <= 2).unwrap_or(1),
+            hidden_panels: kv.get("hidden_panels").map_or(Vec::new(), |v| v.split(',').filter(|s| !s.is_empty()).map(String::from).collect()),
             notif_on: kv.get("notif_on").map_or(false, |v| v == "1"),
             notif_text: kv.get("notif_text").map_or(true, |v| v == "1"),
             extra: kv,
@@ -342,6 +356,9 @@ impl Settings {
         kv.insert("clip_mode".into(), self.clip_mode.key().into());
         kv.insert("onboarded".into(), (self.onboarded as u8).to_string());
         kv.insert("sound".into(), self.sound.key().into());
+        kv.insert("mascot_always".into(), (self.mascot_always as u8).to_string());
+        kv.insert("mascot_pos".into(), self.mascot_pos.to_string());
+        kv.insert("hidden_panels".into(), self.hidden_panels.join(","));
         kv.insert("notif_on".into(), (self.notif_on as u8).to_string());
         kv.insert("notif_text".into(), (self.notif_text as u8).to_string());
         write("settings.txt", &write_kv(&kv));

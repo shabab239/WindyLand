@@ -45,11 +45,31 @@ const SETTINGS_SIZE: (f32, f32) = (640.0, 286.0);
 const ONBOARD_SIZE: (f32, f32) = (600.0, 214.0);
 const ONBOARD: usize = usize::MAX - 3;
 const O_NEXT: u32 = 1;
+/// Last tour step: finish and open Settings.
+const O_SETTINGS: u32 = 4;
 const O_BACK: u32 = 2;
 const O_SKIP: u32 = 3;
 const O_STYLE: u32 = 10; // + index into NotchStyle::ALL
 const O_EDGE: u32 = 20; // + index into Edge::ALL
-const ONBOARD_STEPS: u8 = 3;
+const ONBOARD_STEPS: u8 = 4;
+/// Tour step 3: how to use it.
+const TOUR_TIPS: [(&str, &str, &str); 3] = [
+    (glyph::PLAY, "Hover to open", "Click works too. Move the mouse away and it closes."),
+    ("\u{E962}", "Scroll to switch", "Roll the mouse wheel on the open notch to change panels."),
+    (glyph::BACK, "Right-drag: move it", "Drop it on any edge of any screen."),
+];
+/// Tour step 4: what's in Settings, at a glance.
+const TOUR_SETTINGS: [(&str, &str, &str); 8] = [
+    ("\u{E771}", "Style & edge", "4 looks, any screen edge"),
+    ("\u{E76E}", "Mascot", "Follows your mouse"),
+    (glyph::VOLUME, "Sounds", "Pick a chime, or none"),
+    ("\u{E8A9}", "Panels", "Hide what you don't use"),
+    (glyph::BELL, "Notifications", "Opt-in Windows alerts"),
+    (glyph::PASTE, "Clipboard", "Opt-in copy history"),
+    ("\u{E708}", "Prayer times", "Times and reminders"),
+    ("\u{E896}", "Updates", "One click to update"),
+];
+const TOUR_Q_SETTINGS: &str = "Right-click the notch, or click the tray icon, for Settings:";
 
 // Settings panel action ids.
 const S_STYLE: u32 = 10; // + index into NotchStyle::ALL
@@ -66,16 +86,24 @@ const S_CLIP_ON: u32 = 66;
 const S_PRIVACY: u32 = 67;
 const S_CLIP_MODE: u32 = 70; // + index into ClipMode::ALL
 const S_SOUND: u32 = 80; // + index into Sound::ALL
-const S_PAGE: u32 = 90; // + page index (General, Privacy & alerts)
+const S_PAGE: u32 = 90; // + page index (General, Privacy, Panels)
 const S_NOTIF_ON: u32 = 100;
 const S_NOTIF_TEXT: u32 = 101;
 const S_NOTIF_BANNERS: u32 = 102;
 const S_NOTIF_UNMUTE: u32 = 103;
+const S_POLICY: u32 = 104;
+const S_MASCOT_ALWAYS: u32 = 105;
+const S_MASCOT_POS: u32 = 106; // + 0 left, 1 centre, 2 right
+const S_PANEL: u32 = 120; // + module index
 /// Hit id of a toast's body (clicking the toast itself, not a button).
 const TOAST_BODY: u32 = 999;
 
 const TIMER_TICK: usize = 1;
 const TIMER_FRAME: usize = 2;
+/// Self-test: behave as if no full-screen app were running (the tests run
+/// on the user's PC, maybe while a game is open).
+pub static FORCE_VISIBLE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
 /// `frame_interval` value meaning "draw on every display refresh".
 pub const VSYNC: u32 = 1;
 
@@ -168,9 +196,18 @@ pub struct App {
     /// Tab highlight pill offset in the tab bar, and when it was last drawn.
     pill_off: f32,
     pill_last: f64,
+    /// Mouse wheel over the open notch: amount not yet turned into a tab
+    /// switch, and when the last switch happened.
+    wheel_acc: f32,
+    wheel_t: f64,
+    wheel_last: f64,
+    /// The tab bar's rect in the last drawn frame.
+    tab_bar: Rect,
+    /// Where the closed notch drew the mascot last (for the self-test).
+    mascot_rect: Option<Rect>,
     /// Welcome tour step while it is showing (first run, or from the tray).
     onboarding: Option<u8>,
-    /// Settings page: 0 General, 1 Privacy & alerts.
+    /// Settings page: 0 General, 1 Privacy, 2 Panels.
     settings_page: u8,
     /// The current toast's picture as a bitmap: (image address, gfx generation).
     toast_bmp: Option<(usize, u32, windows::Win32::Graphics::Direct2D::ID2D1Bitmap)>,
@@ -313,6 +350,11 @@ impl App {
                 switch_dir: 1.0,
                 pill_off: 0.0,
                 pill_last: -10.0,
+                wheel_acc: 0.0,
+                wheel_t: -10.0,
+                wheel_last: -10.0,
+                tab_bar: Rect::default(),
+                mascot_rect: None,
                 onboarding: None,
                 settings_page: 0,
                 toast_bmp: None,
@@ -428,10 +470,13 @@ impl App {
             };
             f(self.modules[i].as_mut(), &mut ctx)
         };
+        let on = self.enabled(i);
         for t in toasts {
-            self.push_toast(t);
+            if on {
+                self.push_toast(t);
+            }
         }
-        if let Some(m) = open_tab {
+        if let Some(m) = open_tab.filter(|_| on) {
             self.tab = m;
             self.expanded = true;
             self.leave_at = Some(self.t() + 2.5);
@@ -496,6 +541,10 @@ impl App {
         for i in 0..self.modules.len() {
             self.call(i, |m, c| m.tick(c));
         }
+        let tabs = self.tab_list();
+        if !tabs.contains(&self.tab) {
+            self.tab = tabs.first().copied().unwrap_or(0);
+        }
         self.check_fullscreen();
         self.update_mood();
         self.request_frame();
@@ -506,7 +555,7 @@ impl App {
     /// busy while the desktop itself has focus and for some ordinary
     /// windows, which made the notch vanish until the Start menu was opened.
     pub fn check_fullscreen(&mut self) {
-        let busy = unsafe {
+        let busy = !FORCE_VISIBLE.load(std::sync::atomic::Ordering::Relaxed) && unsafe {
             matches!(SHQueryUserNotificationState(), Ok(QUNS_RUNNING_D3D_FULL_SCREEN) | Ok(QUNS_PRESENTATION_MODE)) || self.foreground_fullscreen()
         };
         if busy != self.hidden {
@@ -564,6 +613,9 @@ impl App {
     fn live_module(&self) -> Option<usize> {
         let mut best: Option<(u8, usize)> = None;
         for (i, m) in self.modules.iter().enumerate() {
+            if !self.enabled(i) {
+                continue;
+            }
             if let Some(p) = m.live() {
                 if best.map_or(true, |(bp, _)| p > bp) {
                     best = Some((p, i));
@@ -573,8 +625,27 @@ impl App {
         best.map(|(_, i)| i)
     }
 
+    /// Module `i` is on (its panel isn't hidden in Settings > Panels).
+    /// Modules without a tab are always on.
+    fn enabled(&self, i: usize) -> bool {
+        let m = &self.modules[i];
+        !m.has_tab() || !self.settings.panel_hidden(m.title())
+    }
+
+    /// The tabs in the tab bar, in order.
+    fn tab_list(&self) -> Vec<usize> {
+        (0..self.modules.len()).filter(|&i| self.modules[i].has_tab() && self.enabled(i)).collect()
+    }
+
+    /// The mascot shares the closed notch with a live activity / the clock,
+    /// at the side picked in Settings (top and bottom edges, Full style).
+    fn mascot_side(&self) -> Option<u8> {
+        let st = &self.settings;
+        (st.style == NotchStyle::Full && !st.edge.vertical() && self.mood != Mood::Clock).then_some(st.mascot_pos)
+    }
+
     /// Mascot state machine: clock -> eyes (notch idle) -> doze (user away)
-    /// -> wave (user back) -> eyes.
+    /// -> wave (user back) -> eyes. With "Always" the clock step is skipped.
     fn update_mood(&mut self) {
         let t = self.t();
         let busy = self.expanded || self.toast.is_some() || self.live_module().is_some();
@@ -582,7 +653,8 @@ impl App {
             self.last_activity = t;
         }
         let idle = Self::system_idle_secs();
-        let next = if !self.settings.personality || busy || self.settings.style != NotchStyle::Full {
+        let always = self.settings.mascot_always;
+        let next = if !self.settings.personality || (busy && !always) || self.settings.style != NotchStyle::Full {
             Mood::Clock
         } else {
             match self.mood {
@@ -590,6 +662,7 @@ impl App {
                 Mood::Wave if t - self.mood_since > 3.0 => Mood::Eyes,
                 Mood::Wave => Mood::Wave,
                 _ if idle > 120.0 => Mood::Doze,
+                _ if always => Mood::Eyes,
                 _ if t - self.last_activity > 45.0 => Mood::Eyes,
                 Mood::Clock => Mood::Clock,
                 m => m,
@@ -679,7 +752,9 @@ impl App {
             }
             Mode::Collapsed => {
                 let live = self.live_module().is_some();
+                let side_mascot = matches!(self.mascot_side(), Some(0 | 2));
                 match (self.settings.style, vertical) {
+                    (NotchStyle::Full, false) if live && side_mascot => (364.0, 34.0, 13.0),
                     (NotchStyle::Full, false) if live => (300.0, 34.0, 13.0),
                     (NotchStyle::Full, false) => (200.0, 32.0, 12.0),
                     (NotchStyle::Full, true) if live => (130.0, 40.0, 14.0),
@@ -781,7 +856,7 @@ impl App {
 
         self.render(target, dist);
 
-        let ambient = self.modules.iter().any(|m| m.animating())
+        let ambient = (0..self.modules.len()).any(|i| self.enabled(i) && self.modules[i].animating())
             || matches!(self.mood, Mood::Eyes | Mood::Doze | Mood::Wave)
             || self.toast.is_some()
             || self.leave_at.is_some()
@@ -794,7 +869,7 @@ impl App {
         } else if ambient {
             // Precise timer (see main.rs): 60 fps for live content in the
             // open panel (lyrics, progress, stopwatch), 30 fps otherwise.
-            let live = self.mode() == Mode::Expanded && self.modules.iter().any(|m| m.animating());
+            let live = self.mode() == Mode::Expanded && (0..self.modules.len()).any(|i| self.enabled(i) && self.modules[i].animating());
             self.set_frame_timer(if live { 16 } else { 33 });
         } else {
             self.set_frame_timer(0);
@@ -965,7 +1040,8 @@ impl App {
         let now = Now::get();
         let mouse = self.mouse;
         let slot = TAB_H + 4.0;
-        let tabs: Vec<usize> = (0..self.modules.len()).filter(|&i| self.modules[i].has_tab()).collect();
+        let tabs = self.tab_list();
+        self.tab_bar = bar;
         // The highlight pill glides to the selected tab (or the gear).
         let sel_off = if self.settings_open {
             tabs.len() as f32 * slot + 4.0
@@ -1139,6 +1215,10 @@ impl App {
         let accent = col::ACCENT;
         let page = self.settings_page;
         let muted = crate::modules::notifs::muted(&st.extra).len();
+        let panels: Vec<(usize, &'static str, &'static str, bool)> = (0..self.modules.len())
+            .filter(|&i| self.modules[i].has_tab())
+            .map(|i| (i, panel_name(self.modules[i].title()), self.modules[i].icon(), !st.panel_hidden(self.modules[i].title())))
+            .collect();
         let mut ui = Ui { g: &mut self.gfx, hits: &mut self.hits, module: SETTINGS, mouse, t };
         let mut left = Rect::new(r.x, r.y, 372.0_f32.min(r.w * 0.6), r.h);
         let mut right = Rect::new(left.r() + 20.0, r.y, r.r() - left.r() - 20.0, r.h);
@@ -1164,9 +1244,15 @@ impl App {
         }
         ui.button(center, "Center", S_CENTER);
 
-        label(&mut ui, left.cut_top(16.0, 4.0), "Mascot (Full style, when idle)");
-        let grid = left.cut_top(94.0, 10.0);
-        let rows = [Rect::new(grid.x, grid.y, grid.w, 44.0), Rect::new(grid.x, grid.y + 50.0, grid.w, 44.0)];
+        let mut mrow = left.cut_top(22.0, 4.0);
+        for (k, name) in ["Left", "Center", "Right"].iter().enumerate().rev() {
+            ui.chip(mrow.cut_right(50.0, 4.0), name, S_MASCOT_POS + k as u32, st.mascot_pos == k as u8, accent);
+        }
+        mrow.cut_right(6.0, 0.0);
+        ui.chip(mrow.cut_right(60.0, 0.0), "Always", S_MASCOT_ALWAYS, st.mascot_always, accent);
+        label(&mut ui, mrow, "Mascot (Full style)");
+        let grid = left.cut_top(90.0, 8.0);
+        let rows = [Rect::new(grid.x, grid.y, grid.w, 42.0), Rect::new(grid.x, grid.y + 48.0, grid.w, 42.0)];
         // Tile 0 is "Clock" (no mascot), then every mascot.
         let mut k = 0usize;
         for row in rows {
@@ -1216,9 +1302,9 @@ impl App {
         let v = format!("WindyLand {}  ·  right-click the notch for settings", crate::modules::update::VERSION);
         ui.text(&v, foot, 10.0, col::FAINT, Weight::Regular, Align::Left);
 
-        // The right column has two pages.
+        // The right column has three pages.
         let seg = right.cut_top(26.0, 12.0);
-        for (i, (cell, name)) in seg.columns(2, 6.0).into_iter().zip(["General", "Privacy & alerts"]).enumerate() {
+        for (i, (cell, name)) in seg.columns(3, 6.0).into_iter().zip(["General", "Privacy", "Panels"]).enumerate() {
             ui.chip(cell, name, S_PAGE + i as u32, page == i as u8, accent);
         }
         let half = |rr: &mut Rect, gap: f32| {
@@ -1234,7 +1320,25 @@ impl App {
             ui.button(b, "Open data folder", S_DATA);
             let (a, b) = half(&mut right, 6.0);
             ui.button(a, "GitHub page", S_GITHUB);
-            ui.button_c(b, "Quit WindyLand", S_QUIT, col::RED.with_a(0.18), col::RED);
+            ui.button(b, "Privacy policy", S_POLICY);
+            let (a, _) = half(&mut right, 6.0);
+            ui.button_c(a, "Quit WindyLand", S_QUIT, col::RED.with_a(0.18), col::RED);
+        } else if page == 2 {
+            label(&mut ui, right.cut_top(16.0, 4.0), "Show these panels");
+            let rows = (panels.len() + 1) / 2;
+            let grid = right.cut_top(rows as f32 * 26.0 + (rows.max(1) - 1) as f32 * 6.0, 8.0);
+            for (row_i, row) in grid.rows(rows, 6.0).into_iter().enumerate() {
+                for (col_i, cell) in row.columns(2, 6.0).into_iter().enumerate() {
+                    let Some(&(i, name, icon, on)) = panels.get(row_i * 2 + col_i) else { continue };
+                    ui.chip(cell, "", S_PANEL + i as u32, on, accent);
+                    let mut c = cell.inset_xy(9.0, 0.0);
+                    let ic = c.cut_left(14.0, 6.0);
+                    let fg = if on { col::TEXT } else { col::FAINT };
+                    ui.icon(icon, ic, 11.5, fg);
+                    ui.text(name, c, 12.0, fg, Weight::Semi, Align::Left);
+                }
+            }
+            ui.text_wrap("A hidden panel is off: no tab, no reminders. Scroll the wheel on the open notch to switch panels.", right, 10.5, col::DIM, Weight::Regular, Align::Left);
         } else {
             label(&mut ui, right.cut_top(16.0, 2.0), "Windows notifications");
             ui.toggle(right.cut_top(26.0, 0.0), "Show them in the notch", st.notif_on, S_NOTIF_ON, accent);
@@ -1284,7 +1388,21 @@ impl App {
                 sound::play(s);
             }
             S_CLIP_ON => self.settings.clip_on = !self.settings.clip_on,
-            i if (S_PAGE..S_PAGE + 2).contains(&i) => self.settings_page = (i - S_PAGE) as u8,
+            i if (S_PAGE..S_PAGE + 3).contains(&i) => self.settings_page = (i - S_PAGE) as u8,
+            S_MASCOT_ALWAYS => self.settings.mascot_always = !self.settings.mascot_always,
+            i if (S_MASCOT_POS..S_MASCOT_POS + 3).contains(&i) => self.settings.mascot_pos = (i - S_MASCOT_POS) as u8,
+            i if (S_PANEL..S_PANEL + self.modules.len() as u32).contains(&i) => {
+                let title = self.modules[(i - S_PANEL) as usize].title().to_string();
+                if self.settings.panel_hidden(&title) {
+                    self.settings.hidden_panels.retain(|t| *t != title);
+                } else if self.tab_list().len() > 1 {
+                    // At least one panel always stays.
+                    self.settings.hidden_panels.push(title);
+                }
+            }
+            S_POLICY => unsafe {
+                ShellExecuteW(None, w!("open"), w!("https://github.com/shabab239/WindyLand/blob/main/PRIVACY.md"), None, None, SW_SHOWNORMAL);
+            },
             S_NOTIF_ON => self.settings.notif_on = !self.settings.notif_on,
             S_NOTIF_TEXT => self.settings.notif_text = !self.settings.notif_text,
             S_NOTIF_BANNERS => crate::modules::notifs::open_uri(w!("ms-settings:notifications")),
@@ -1344,6 +1462,10 @@ impl App {
         match id {
             O_NEXT if step + 1 >= ONBOARD_STEPS => self.finish_onboarding(),
             O_NEXT => self.onboarding = Some(step + 1),
+            O_SETTINGS => {
+                self.finish_onboarding();
+                self.open_settings();
+            }
             O_BACK => self.onboarding = Some(step.saturating_sub(1)),
             O_SKIP => self.finish_onboarding(),
             i if (O_STYLE..O_STYLE + NotchStyle::ALL.len() as u32).contains(&i) => {
@@ -1371,7 +1493,7 @@ impl App {
         // Header: title, step dots, Skip.
         let mut head = r.cut_top(24.0, 4.0);
         ui.button_c(head.cut_right(60.0, 0.0), "Skip", O_SKIP, col::BTN, col::DIM);
-        let dots = head.cut_right(54.0, 8.0);
+        let dots = head.cut_right(12.0 * ONBOARD_STEPS as f32 + 18.0, 8.0);
         for k in 0..ONBOARD_STEPS {
             let on = k == step;
             let c = if on { accent } else { col::TEXT.with_a(0.25) };
@@ -1383,13 +1505,17 @@ impl App {
         let (question, hint) = match step {
             0 => ("First, how should the notch look when it's closed?", "Pick one. You can change it anytime in Settings."),
             1 => ("Where should it sit?", "Or right-drag the notch to any edge, on any screen."),
-            _ => ("Three things to know", "That's it. Enjoy!"),
+            2 => ("How to use it", "Three quick tips."),
+            _ => (TOUR_Q_SETTINGS, "That's it. Enjoy!"),
         };
         ui.text(question, r.cut_top(20.0, 2.0), 12.5, col::DIM, Weight::Regular, Align::Left);
         let mut foot = r.cut_bottom(28.0, 0.0);
         let next = if step + 1 >= ONBOARD_STEPS { "Start using WindyLand" } else { "Next" };
         let nw = ui.measure(next, 12.0, Weight::Semi) + 40.0;
         ui.button_accent(foot.cut_right(nw, 8.0), next, O_NEXT, accent);
+        if step + 1 >= ONBOARD_STEPS {
+            ui.button(foot.cut_right(110.0, 8.0), "Open Settings", O_SETTINGS);
+        }
         if step > 0 {
             ui.button(foot.cut_right(70.0, 8.0), "Back", O_BACK);
         }
@@ -1453,13 +1579,8 @@ impl App {
                     ui.chip(cell, e.label(), O_EDGE + i as u32, st.edge == e, accent);
                 }
             }
-            _ => {
-                let tips = [
-                    (glyph::PLAY, "Hover to open", "The icons along the top switch between music, timer, to-do and more."),
-                    (glyph::SETTINGS, "Right-click: Settings", "Style, position, mascot, clipboard history and more live there."),
-                    (glyph::BACK, "Right-drag: move it", "It snaps to the nearest edge of whichever screen you drop it on."),
-                ];
-                for (cell, (g, title, sub)) in body.columns(3, 10.0).into_iter().zip(tips) {
+            2 => {
+                for (cell, (g, title, sub)) in body.columns(3, 10.0).into_iter().zip(TOUR_TIPS) {
                     ui.fill_rr(cell, 12.0, col::BTN);
                     let mut c = cell.inset(10.0);
                     let ic = c.cut_top(26.0, 6.0);
@@ -1467,6 +1588,20 @@ impl App {
                     ui.icon(g, Rect::new(ic.x, ic.y, 26.0, 26.0), 12.0, accent);
                     ui.text(title, c.cut_top(18.0, 2.0), 12.5, col::TEXT, Weight::Semi, Align::Left);
                     ui.text_wrap(sub, c, 11.0, col::DIM, Weight::Regular, Align::Left);
+                }
+            }
+            _ => {
+                // Settings at a glance: two rows of four.
+                let rows = body.rows(2, 8.0);
+                for (k, (g, title, sub)) in TOUR_SETTINGS.iter().enumerate() {
+                    let cell = rows[k / 4].columns(4, 8.0)[k % 4];
+                    ui.fill_rr(cell, 10.0, col::BTN);
+                    let mut c = cell.inset_xy(8.0, 6.0);
+                    let ic = c.cut_left(24.0, 6.0);
+                    ui.circle(ic.cx(), ic.y + 12.0, 12.0, accent.with_a(0.18));
+                    ui.icon(g, Rect::new(ic.x, ic.y, 24.0, 24.0), 11.0, accent);
+                    ui.text(title, c.cut_top(16.0, 1.0), 12.0, col::TEXT, Weight::Semi, Align::Left);
+                    ui.text_wrap(sub, c, 10.5, col::DIM, Weight::Regular, Align::Left);
                 }
             }
         }
@@ -1576,7 +1711,23 @@ impl App {
         let mouse = self.mouse;
         let compact = self.settings.style == NotchStyle::Compact;
         let vertical = self.settings.edge.vertical();
+        let side = self.mascot_side();
+        let mood_t = (t - self.mood_since) as f32;
+        let fade = (mood_t / 0.6).clamp(0.0, 1.0);
         if let Some(i) = self.live_module() {
+            // A side mascot takes a strip of the (wider) notch; a centred one
+            // sits between the two wings.
+            let mut goal = goal;
+            let mut mascot_r = None;
+            if let Some(s) = side.filter(|s| *s != 1) {
+                let strip = 62.0;
+                mascot_r = Some(if s == 0 {
+                    Rect::new(goal.x + 10.0, goal.y + 2.0, strip - 4.0, goal.h - 4.0)
+                } else {
+                    Rect::new(goal.r() - strip - 6.0, goal.y + 2.0, strip - 4.0, goal.h - 4.0)
+                });
+                goal = Rect::new(goal.x + if s == 0 { strip } else { 0.0 }, goal.y, (goal.w - strip).max(0.0), goal.h);
+            }
             let (left, right) = if vertical {
                 // Icon/art on top, time below (Compact: icon only).
                 let s = if compact { 16.0 } else { 20.0 };
@@ -1590,16 +1741,36 @@ impl App {
                     Rect::new(goal.r() - pad - wing, goal.y + 2.0, wing, goal.h - 4.0),
                 )
             };
+            if side == Some(1) && !vertical && right.x - left.r() > 40.0 {
+                mascot_r = Some(Rect::new(left.r() + 2.0, goal.y + 2.0, right.x - left.r() - 4.0, goal.h - 4.0));
+            }
             let mut ui = Ui { g: &mut self.gfx, hits: &mut self.hits, module: i, mouse, t };
             self.modules[i].draw_live(&mut ui, left, right);
+            if let Some(mr) = mascot_r {
+                ui.alpha = fade;
+                draw_mascot(&mut ui, mr, self.settings.mascot, self.mood, t, self.origin, self.scale);
+                ui.alpha = 1.0;
+            }
             // Live wings are display-only; clicking anywhere expands.
             self.hits.retain(|h| h.module != i);
+            self.mascot_rect = mascot_r;
             return;
         }
         let mut ui = Ui { g: &mut self.gfx, hits: &mut self.hits, module: APP_HIT, mouse, t };
         let area = if vertical { goal.inset_xy(2.0, 14.0) } else { goal.inset_xy(14.0, 2.0) };
-        let mood_t = (t - self.mood_since) as f32;
-        let fade = (mood_t / 0.6).clamp(0.0, 1.0);
+        self.mascot_rect = None;
+        // Mascot at the left or right with the clock beside it.
+        if let Some(s) = side.filter(|s| *s != 1) {
+            let mut rest = area;
+            let mr = if s == 0 { rest.cut_left(64.0, 4.0) } else { rest.cut_right(64.0, 4.0) };
+            let size = if compact { 11.0 } else { 14.0 };
+            ui.text(&Now::get().hhmm(), rest, size, col::TEXT, Weight::Semi, Align::Center);
+            ui.alpha = fade;
+            draw_mascot(&mut ui, mr, self.settings.mascot, self.mood, t, self.origin, self.scale);
+            ui.alpha = 1.0;
+            self.mascot_rect = Some(mr);
+            return;
+        }
         match self.mood {
             Mood::Clock => {
                 let now = Now::get();
@@ -1619,6 +1790,7 @@ impl App {
                 ui.alpha = fade;
                 draw_mascot(&mut ui, area, self.settings.mascot, m, t, self.origin, self.scale);
                 ui.alpha = 1.0;
+                self.mascot_rect = Some(area);
             }
         }
     }
@@ -1770,10 +1942,54 @@ impl App {
         self.request_frame();
     }
 
+    /// Mouse wheel over the open notch: a list that can scroll scrolls;
+    /// anywhere else (and always over the tab bar) it switches panels, one
+    /// per notch of the wheel. Down / toward you = the next tab.
     fn on_wheel(&mut self, delta: f32) {
-        if self.mode() == Mode::Expanded {
-            self.modules[self.tab].scroll(delta);
-            self.request_frame();
+        if self.mode() != Mode::Expanded || self.onboarding.is_some() {
+            return;
+        }
+        self.request_frame();
+        let (mx, my) = self.mouse;
+        let over_bar = self.tab_bar.inset_xy(-8.0, -6.0).contains(mx, my);
+        if self.settings_open || self.keyboard.is_some() {
+            return;
+        }
+        if !over_bar && self.modules[self.tab].scroll(delta) {
+            self.wheel_acc = 0.0;
+            return;
+        }
+        let t = self.t();
+        // A new gesture starts fresh; a fast flick moves one tab at a time
+        // (the rest of the flick is dropped).
+        if t - self.wheel_last > 0.6 {
+            self.wheel_acc = 0.0;
+        }
+        self.wheel_last = t;
+        if t - self.wheel_t < 0.18 {
+            self.wheel_acc = 0.0;
+            return;
+        }
+        self.wheel_acc += delta;
+        if self.wheel_acc.abs() < 0.99 {
+            return;
+        }
+        let step = if self.wheel_acc < 0.0 { 1 } else { -1 };
+        self.wheel_acc = 0.0;
+        self.wheel_t = t;
+        self.step_tab(step);
+    }
+
+    /// Move to the next (+1) or previous (-1) visible tab; stops at the ends.
+    fn step_tab(&mut self, step: i32) {
+        let tabs = self.tab_list();
+        let Some(pos) = tabs.iter().position(|&i| i == self.tab) else { return };
+        let next = pos as i32 + step;
+        if next >= 0 && (next as usize) < tabs.len() {
+            let i = tabs[next as usize];
+            self.modules[self.tab].blur();
+            self.tab = i;
+            self.leave_at = None;
         }
     }
 
@@ -2675,7 +2891,7 @@ pub fn selftest() -> String {
             a.leave_at = Some(a.t() - 1.0);
             a.frame();
             out += &format!("{:<4} welcome tour stays open without the mouse\n", if a.mode() == Mode::Expanded && a.onboarding == Some(0) { "OK" } else { "FAIL" });
-            for (k, name) in ["style", "position", "tips"].iter().enumerate() {
+            for (k, name) in ["style", "position", "tips", "settings"].iter().enumerate() {
                 a.onboarding = Some(k as u8);
                 out += &snap(a, &format!("welcome tour step {} ({name})", k + 1));
             }
@@ -2690,7 +2906,10 @@ pub fn selftest() -> String {
             out += &format!("{:<4} step 1 offers the 4 styles and picking Pill applies it\n", if ok { "OK" } else { "FAIL" });
             let ok = click(a, O_NEXT) && a.onboarding == Some(1) && click(a, O_EDGE + 1) && a.settings.edge == Edge::Bottom && a.mode() == Mode::Expanded;
             out += &format!("{:<4} step 2 moves the notch and the tour stays open\n", if ok { "OK" } else { "FAIL" });
-            let ok = click(a, O_NEXT) && a.onboarding == Some(2) && click(a, O_NEXT) && a.onboarding.is_none();
+            let ok = click(a, O_NEXT) && a.onboarding == Some(2) && click(a, O_NEXT) && a.onboarding == Some(3);
+            let glance = a.hits.iter().filter(|h| h.module == ONBOARD).count() > 0 && a.onboarding == Some(3);
+            out += &format!("{:<4} tour shows the mouse-wheel tip and Settings at a glance ({} items)\n", if glance { "OK" } else { "FAIL" }, TOUR_SETTINGS.len());
+            let ok = ok && click(a, O_NEXT) && a.onboarding.is_none();
             let saved = crate::store::read("settings.txt").contains("onboarded=1");
             let told = a.queue.iter().any(|t| t.key == "welcome" && t.sub.contains("right-click"));
             out += &format!("{:<4} finishing saves it and says how to change things later\n", if ok && saved && told { "OK" } else { "FAIL" });
@@ -2711,16 +2930,37 @@ pub fn selftest() -> String {
                 }
             }
             let card_w = (ONBOARD_SIZE.0 - 8.0 - 20.0) / 3.0 - 20.0;
-            for s in ["Hover to open", "Right-click: Settings", "Right-drag: move it"] {
+            for (_, s, sub) in TOUR_TIPS {
                 if a.gfx.measure(s, 12.5, Weight::Semi) > card_w {
                     tight.push(s);
                 }
+                // The tip wraps onto at most four lines.
+                if a.gfx.measure(sub, 11.0, Weight::Regular) > card_w * 3.6 {
+                    tight.push(sub);
+                }
             }
-            let foot_w = ONBOARD_SIZE.0 - 8.0 - (a.gfx.measure("Start using WindyLand", 12.0, Weight::Semi) + 48.0) - 78.0;
+            // Settings at a glance: title on one line, description on two.
+            let glance_w = (ONBOARD_SIZE.0 - 8.0 - 24.0) / 4.0 - 16.0 - 30.0;
+            for (_, s, sub) in TOUR_SETTINGS {
+                if a.gfx.measure(s, 12.0, Weight::Semi) > glance_w {
+                    tight.push(s);
+                }
+                if a.gfx.measure(sub, 10.5, Weight::Regular) > glance_w * 1.7 {
+                    tight.push(sub);
+                }
+            }
+            if a.gfx.measure(TOUR_Q_SETTINGS, 12.5, Weight::Regular) > ONBOARD_SIZE.0 - 8.0 {
+                tight.push("settings question");
+            }
+            let foot_w = ONBOARD_SIZE.0 - 8.0 - (a.gfx.measure("Next", 12.0, Weight::Semi) + 48.0) - 78.0;
             for s in ["Pick one. You can change it anytime in Settings.", "Or right-drag the notch to any edge, on any screen."] {
                 if a.gfx.measure(s, 11.0, Weight::Regular) > foot_w {
                     tight.push(s);
                 }
+            }
+            let last_w = ONBOARD_SIZE.0 - 8.0 - (a.gfx.measure("Start using WindyLand", 12.0, Weight::Semi) + 48.0) - 118.0 - 78.0;
+            if a.gfx.measure("That's it. Enjoy!", 11.0, Weight::Regular) > last_w || a.gfx.measure("Open Settings", 12.0, Weight::Semi) > 110.0 - 16.0 {
+                tight.push("last step footer");
             }
             if a.gfx.measure("First, how should the notch look when it's closed?", 12.5, Weight::Regular) > ONBOARD_SIZE.0 {
                 tight.push("question");
@@ -2751,12 +2991,15 @@ pub fn selftest() -> String {
             a.switch_t = -10.0;
             out += &snap(a, "settings panel");
             let tiles = a.hits.iter().filter(|h| h.module == SETTINGS && (S_MASCOT..=S_MASCOT + Mascot::ALL.len() as u32).contains(&h.id)).count();
+            let policy = a.hits.iter().any(|h| h.module == SETTINGS && h.id == S_POLICY);
+            let fits = a.gfx.bbox().map_or(false, |b| (b.3 as f32) < CANVAS_H * a.scale);
+            out += &format!("{:<4} settings has a Privacy policy button and everything fits\n", if policy && fits { "OK" } else { "FAIL" });
             out += &format!("{:<4} settings shows {tiles} mascot tiles (clock + {})\n", if tiles == Mascot::ALL.len() + 1 { "OK" } else { "FAIL" }, Mascot::ALL.len());
             // Every settings label fits its control (button text needs ~16 DIP padding).
             let right_w = SETTINGS_SIZE.0 - 372.0 - 20.0;
             let btn_w = (right_w - 8.0) / 2.0 - 16.0;
             let mut tight = Vec::new();
-            for s in ["Check for updates", "Open data folder", "GitHub page", "Quit WindyLand", "Checking..."] {
+            for s in ["Check for updates", "Open data folder", "GitHub page", "Privacy policy", "Quit WindyLand", "Checking..."] {
                 if a.gfx.measure(s, 12.0, Weight::Semi) > btn_w {
                     tight.push(s);
                 }
@@ -2781,8 +3024,8 @@ pub fn selftest() -> String {
                     tight.push(s);
                 }
             }
-            for s in ["General", "Privacy & alerts"] {
-                if a.gfx.measure(s, 11.5, Weight::Semi) > (right_w - 6.0) / 2.0 - 8.0 {
+            for s in ["General", "Privacy", "Panels"] {
+                if a.gfx.measure(s, 11.5, Weight::Semi) > (right_w - 12.0) / 3.0 - 8.0 {
                     tight.push(s);
                 }
             }
@@ -2795,6 +3038,19 @@ pub fn selftest() -> String {
             let tile_w = (372.0 - 4.0 * 6.0) / 5.0 - 4.0;
             if a.gfx.measure("Sound for reminders (click to hear it)", 11.5, Weight::Semi) > 372.0 {
                 tight.push("sound label");
+            }
+            for (s, w) in [("Left", 50.0), ("Center", 50.0), ("Right", 50.0), ("Always", 60.0)] {
+                if a.gfx.measure(s, 11.5, Weight::Semi) > w - 8.0 {
+                    tight.push(s);
+                }
+            }
+            if a.gfx.measure("Mascot (Full style)", 11.5, Weight::Semi) > 372.0 - 3.0 * 54.0 - 66.0 {
+                tight.push("mascot label");
+            }
+            for i in 0..a.modules.len() {
+                if a.modules[i].has_tab() && a.gfx.measure(panel_name(a.modules[i].title()), 12.0, Weight::Semi) > (right_w - 6.0) / 2.0 - 18.0 - 20.0 {
+                    tight.push(panel_name(a.modules[i].title()));
+                }
             }
             for m in Mascot::ALL {
                 if a.gfx.measure(m.label(), 9.5, Weight::Regular) > tile_w {
@@ -2851,6 +3107,314 @@ pub fn selftest() -> String {
             a.settings.save();
             a.settings_open = false;
             a.expanded = false;
+        }
+        // Prayer times: the maths matches a reference (aladhan.com, same
+        // method) within a minute, across seasons and cities.
+        {
+            use crate::modules::prayer::{self, Calc, Isha};
+            let cases: [(i32, i32, i32, f64, f64, f64, Isha, [&str; 6]); 5] = [
+                (2026, 10, 27, 23.8103, 90.4125, 2.0, Isha::Angle(18.0), ["04:45", "06:01", "11:42", "15:47", "17:23", "18:39"]),
+                (2026, 6, 21, 23.8103, 90.4125, 2.0, Isha::Angle(18.0), ["03:44", "05:12", "12:00", "16:41", "18:48", "20:16"]),
+                (2026, 1, 15, 24.8949, 91.8687, 2.0, Isha::Angle(18.0), ["05:19", "06:39", "12:02", "15:49", "17:25", "18:45"]),
+                (2026, 3, 21, 22.3569, 91.7832, 2.0, Isha::Angle(18.0), ["04:42", "05:56", "12:00", "16:22", "18:04", "19:19"]),
+                (2026, 10, 27, 23.8103, 90.4125, 1.0, Isha::Angle(17.0), ["04:45", "06:01", "11:42", "14:58", "17:23", "18:35"]),
+            ];
+            let (mut worst, mut bad) = (0i64, Vec::new());
+            for (y, m, d, lat, lon, asr, isha, want) in cases {
+                let got = prayer::times(&Calc { lat, lon, tz: 6.0, fajr: 18.0, isha, asr }, y, m, d);
+                for k in 0..6 {
+                    let w: Vec<i64> = want[k].split(':').map(|x| x.parse().unwrap_or(0)).collect();
+                    let diff = ((got[k] * 60.0).round() as i64 - (w[0] * 60 + w[1])).abs();
+                    worst = worst.max(diff);
+                    if diff > 1 {
+                        bad.push(format!("{y}-{m}-{d} {} {} vs {}", prayer::NAMES[k], prayer::hhmm(got[k]), want[k]));
+                    }
+                }
+            }
+            out += &format!("{:<4} prayer times match the reference within a minute (30 checks, worst {worst} min) {:?}\n", if bad.is_empty() { "OK" } else { "FAIL" }, bad);
+            out += &format!("INFO this PC's UTC offset {:+} h\n", prayer::local_tz());
+        }
+        // Prayer panel: pages, picks saved, reminder, countdown in the notch.
+        if let Some(pi) = find(a, "Prayer Times") {
+            use crate::modules::prayer::{A_TEST_DUE, A_TEST_RELOAD, A_TEST_SOON};
+            a.toast = None;
+            a.queue.clear();
+            a.settings_open = false;
+            a.expanded = true;
+            a.tab = pi;
+            a.switch_t = -10.0;
+            out += &snap(a, "prayer panel");
+            let bells = a.hits.iter().filter(|h| h.module == pi && (90..96).contains(&h.id)).count();
+            out += &format!("{:<4} prayer panel lists six times with a reminder bell each ({bells})\n", if bells == 6 { "OK" } else { "FAIL" });
+            let clickm = |a: &mut App, id: u32| -> bool {
+                let tgt = a.target();
+                a.cur = tgt;
+                a.render(tgt, 0.0);
+                match a.hits.iter().find(|h| h.module == pi && h.id == id).copied() {
+                    Some(h) => {
+                        a.on_down(h.rect.cx(), h.rect.cy());
+                        a.on_up(h.rect.cx(), h.rect.cy());
+                        true
+                    }
+                    None => false,
+                }
+            };
+            let saved = |k: &str| crate::store::read("prayer.txt").lines().any(|l| l.trim() == k);
+            let city = clickm(a, 1) && clickm(a, 14) && saved("city=Sylhet");
+            out += &snap(a, "prayer location page");
+            let method = clickm(a, 4) && clickm(a, 51) && saved("method=mwl") && clickm(a, 61) && clickm(a, 60) && saved("asr=shafi");
+            out += &snap(a, "prayer method page");
+            clickm(a, 50);
+            clickm(a, 61);
+            let adjust = clickm(a, 5) && clickm(a, 113) && saved("off_asr=1") && clickm(a, 103) && saved("off_asr=0");
+            out += &snap(a, "prayer adjust page");
+            // Custom latitude, longitude typed in.
+            clickm(a, 3);
+            let mut custom = clickm(a, 40) && a.keyboard == Some(pi);
+            for _ in 0..40 {
+                a.on_key(0x08);
+            }
+            for ch in "21.43, 92.01".chars() {
+                a.on_char(ch);
+            }
+            out += &snap(a, "prayer custom location typing");
+            a.on_key(0x0D);
+            custom = custom && saved("city=custom") && saved("lat=21.4300") && saved("lon=92.0100") && a.keyboard.is_none();
+            clickm(a, 10);
+            let back = clickm(a, 2) && saved("city=Dhaka") && saved("method=karachi") && saved("asr=hanafi");
+            out += &format!(
+                "{:<4} prayer settings: city, method, Asr school, minute nudges and typed coordinates save {:?}\n",
+                if city && method && adjust && custom && back { "OK" } else { "FAIL" },
+                (city, method, adjust, custom, back)
+            );
+            // Tight labels on its pages.
+            let mut tight = Vec::new();
+            let w4 = (modules::PANEL.0 - 18.0) / 4.0 - 8.0;
+            for (c, _, _) in crate::modules::prayer::CITIES {
+                if a.gfx.measure(c, 11.5, Weight::Semi) > w4 {
+                    tight.push(c);
+                }
+            }
+            let wm = (modules::PANEL.0 - 74.0 - 24.0) / 5.0 - 8.0;
+            for (_, m, _, _) in crate::modules::prayer::METHODS {
+                if a.gfx.measure(m, 11.5, Weight::Semi) > wm {
+                    tight.push(m);
+                }
+            }
+            if a.gfx.measure("15 min before", 11.5, Weight::Semi) > (modules::PANEL.0 - 74.0 - 18.0) / 4.0 - 8.0 {
+                tight.push("15 min before");
+            }
+            out += &format!("{:<4} prayer panel labels fit {:?}\n", if tight.is_empty() { "OK" } else { "FAIL" }, tight);
+            // A reminder at prayer time, once.
+            a.expanded = false;
+            a.toast = None;
+            a.queue.clear();
+            a.call(pi, |m, c| m.action(A_TEST_DUE, (0.0, 0.0), c));
+            a.tick();
+            let first = a.toast.as_ref().map(|t| t.0.title.clone()).or_else(|| a.queue.front().map(|t| t.title.clone())).unwrap_or_default();
+            a.toast = None;
+            a.queue.clear();
+            a.tick();
+            let again = a.toast.is_some() || !a.queue.is_empty();
+            out += &format!("{:<4} prayer reminder at the time, once ({first})\n", if first == "Time for Dhuhr" && !again { "OK" } else { "FAIL" });
+            // Ten minutes before: the countdown takes the closed notch.
+            a.toast = None;
+            a.queue.clear();
+            a.call(pi, |m, c| m.action(A_TEST_SOON, (0.0, 0.0), c));
+            let live = a.live_module() == Some(pi);
+            out += &snap(a, "prayer countdown in the notch");
+            out += &format!("{:<4} prayer countdown shows in the closed notch 10 min before\n", if live { "OK" } else { "FAIL" });
+            a.call(pi, |m, c| m.action(A_TEST_RELOAD, (0.0, 0.0), c));
+            let off = a.live_module() != Some(pi);
+            out += &format!("{:<4} prayer reminders and countdown are off until turned on\n", if off { "OK" } else { "FAIL" });
+        } else {
+            out += "FAIL prayer panel missing\n";
+        }
+        // Settings > Panels: hide a panel; its tab and alerts go; one stays.
+        {
+            a.toast = None;
+            a.queue.clear();
+            a.expanded = true;
+            a.settings_open = true;
+            a.settings_page = 2;
+            let wi = find(a, "Water Reminder").unwrap_or(0);
+            let tgt = a.target();
+            a.cur = tgt;
+            a.render(tgt, 0.0);
+            out += &snap(a, "settings page 3 (panels)");
+            let chips = a.hits.iter().filter(|h| h.module == SETTINGS && h.id >= S_PANEL).count();
+            let fits = a.gfx.bbox().map_or(false, |b| (b.3 as f32) < CANVAS_H * a.scale);
+            let hit = a.hits.iter().find(|h| h.module == SETTINGS && h.id == S_PANEL + wi as u32).copied();
+            if let Some(h) = hit {
+                a.on_down(h.rect.cx(), h.rect.cy());
+                a.on_up(h.rect.cx(), h.rect.cy());
+            }
+            let saved = crate::store::read("settings.txt").lines().any(|l| l.trim() == "hidden_panels=Water Reminder");
+            a.settings_open = false;
+            let tgt = a.target();
+            a.cur = tgt;
+            a.render(tgt, 0.0);
+            let no_tab = !a.hits.iter().any(|h| h.module == APP_HIT && h.id == wi as u32);
+            a.call(wi, |_, c| c.toast(Toast::new("water", glyph::DROP, col::CYAN, "Time to drink", "test")));
+            let quiet = a.toast.is_none() && a.queue.is_empty();
+            out += &format!(
+                "{:<4} hiding a panel ({chips} panels listed) removes its tab and silences it, and saves {:?}\n",
+                if chips == a.modules.iter().filter(|m| m.has_tab()).count() && fits && saved && no_tab && quiet { "OK" } else { "FAIL" },
+                (fits, saved, no_tab, quiet)
+            );
+            for i in a.tab_list() {
+                a.settings_action(S_PANEL + i as u32);
+            }
+            let one = a.tab_list().len() == 1 && a.tab_list().contains(&a.tab);
+            out += &format!("{:<4} the last visible panel can't be hidden\n", if one { "OK" } else { "FAIL" });
+            a.settings.hidden_panels.clear();
+            a.settings.save();
+            a.tick();
+        }
+        // Mouse wheel on the open notch switches panels; lists still scroll.
+        {
+            a.toast = None;
+            a.queue.clear();
+            a.settings_open = false;
+            a.expanded = true;
+            a.release_keyboard();
+            let tabs = a.tab_list();
+            let wi = find(a, "Water Reminder").unwrap_or(0);
+            let pos = tabs.iter().position(|&i| i == wi).unwrap_or(0);
+            a.tab = wi;
+            let tgt = a.target();
+            a.cur = tgt;
+            a.render(tgt, 0.0);
+            let content = (a.tab_bar.cx(), a.tab_bar.b() + 70.0);
+            let bar = (a.tab_bar.cx(), a.tab_bar.cy());
+            a.mouse = content;
+            a.wheel_t = -10.0;
+            a.on_wheel(-1.0);
+            let down = a.tab == tabs[pos + 1];
+            a.wheel_t = -10.0;
+            a.on_wheel(1.0);
+            let up = a.tab == wi;
+            // A fast flick moves one panel, not several.
+            a.wheel_t = -10.0;
+            for _ in 0..4 {
+                a.on_wheel(-1.0);
+            }
+            let flick = a.tab == tabs[pos + 1];
+            a.tab = *tabs.last().unwrap_or(&0);
+            a.wheel_t = -10.0;
+            a.on_wheel(-1.0);
+            let end = a.tab == *tabs.last().unwrap_or(&0);
+            // Small touchpad steps add up to one switch.
+            a.tab = wi;
+            a.wheel_t = -10.0;
+            a.on_wheel(-0.4);
+            let half = a.tab == wi;
+            a.on_wheel(-0.4);
+            a.on_wheel(-0.4);
+            let pad = half && a.tab == tabs[pos + 1];
+            // A to-do list long enough to scroll keeps the wheel; the tab bar
+            // still switches.
+            let ti = find(a, "TodoList").unwrap_or(0);
+            for k in 0..8 {
+                a.call(ti, |m, c| {
+                    m.action(1, (0.0, 0.0), c);
+                    for ch in format!("Wheel test {k}").chars() {
+                        m.chr(ch, c);
+                    }
+                    m.key(0x0D, false, c);
+                });
+            }
+            a.release_keyboard();
+            a.tab = ti;
+            let tgt = a.target();
+            a.cur = tgt;
+            a.render(tgt, 0.0);
+            a.mouse = content;
+            a.wheel_t = -10.0;
+            a.on_wheel(-1.0);
+            let list = a.tab == ti;
+            a.mouse = bar;
+            a.wheel_t = -10.0;
+            a.on_wheel(-1.0);
+            let tpos = tabs.iter().position(|&i| i == ti).unwrap_or(0);
+            let over_bar = tabs.get(tpos + 1).map_or(a.tab == ti, |&n| a.tab == n);
+            out += &format!(
+                "{:<4} mouse wheel switches panels (down, up, one per flick, stops at the end, touchpad), scrolls lists, tab bar always switches {:?}\n",
+                if down && up && flick && end && pad && list && over_bar { "OK" } else { "FAIL" },
+                (down, up, flick, end, pad, list, over_bar)
+            );
+            a.expanded = false;
+        }
+        // Mascot: "Always" and left / centre / right, with and without a live activity.
+        {
+            let before = (a.settings.mascot_always, a.settings.mascot_pos, a.settings.personality, a.settings.style, a.settings.edge);
+            a.settings.personality = true;
+            a.settings.style = NotchStyle::Full;
+            a.settings.edge = Edge::Top;
+            a.expanded = false;
+            a.toast = None;
+            a.queue.clear();
+            a.settings.mascot_always = false;
+            a.last_activity = a.t();
+            a.update_mood();
+            let clock_first = a.mood == Mood::Clock;
+            a.settings.mascot_always = true;
+            a.update_mood();
+            let always = a.mood == Mood::Eyes;
+            let mut where_ok = Vec::new();
+            for pos in 0..3u8 {
+                a.settings.mascot_pos = pos;
+                let tgt = a.target();
+                a.cur = tgt;
+                a.render(tgt, 0.0);
+                let notch = a.edge_rect(tgt.0, tgt.1);
+                let m = a.mascot_rect.unwrap_or_default();
+                let ok = match pos {
+                    0 => m.cx() < notch.cx() - 30.0,
+                    1 => (m.cx() - notch.cx()).abs() < 4.0,
+                    _ => m.cx() > notch.cx() + 30.0,
+                };
+                where_ok.push(ok && a.mascot_rect.is_some());
+            }
+            out += &snap(a, "mascot always, right, clock beside it");
+            // With music (or any live activity) in the closed notch.
+            let pi = find(a, "Prayer Times").unwrap_or(0);
+            a.call(pi, |m, c| m.action(crate::modules::prayer::A_TEST_SOON, (0.0, 0.0), c));
+            a.update_mood();
+            let mut live_ok = Vec::new();
+            for pos in 0..3u8 {
+                a.settings.mascot_pos = pos;
+                let tgt = a.target();
+                a.cur = tgt;
+                a.render(tgt, 0.0);
+                let notch = a.edge_rect(tgt.0, tgt.1);
+                let m = a.mascot_rect.unwrap_or_default();
+                let wide = if pos == 1 { tgt.0 == 300.0 } else { tgt.0 == 364.0 };
+                let side = match pos {
+                    0 => m.cx() < notch.x + 50.0,
+                    1 => (m.cx() - notch.cx()).abs() < 4.0,
+                    _ => m.cx() > notch.r() - 50.0,
+                };
+                live_ok.push(a.mascot_rect.is_some() && wide && side && notch.contains(m.cx(), m.cy()));
+                if pos == 0 {
+                    out += &snap(a, "mascot always, left, with countdown");
+                }
+            }
+            a.call(pi, |m, c| m.action(crate::modules::prayer::A_TEST_RELOAD, (0.0, 0.0), c));
+            // Off again: the clock is back once the notch is used.
+            a.settings.mascot_always = false;
+            a.expanded = true;
+            a.update_mood();
+            let back = a.mood == Mood::Clock;
+            a.expanded = false;
+            out += &format!(
+                "{:<4} mascot \"Always\" shows it at once, at left / center / right, beside the clock and beside a live activity {:?}\n",
+                if clock_first && always && back && where_ok.iter().all(|x| *x) && live_ok.iter().all(|x| *x) { "OK" } else { "FAIL" },
+                (clock_first, always, back, where_ok, live_ok)
+            );
+            (a.settings.mascot_always, a.settings.mascot_pos, a.settings.personality, a.settings.style, a.settings.edge) = before;
+            a.settings.save();
+            a.update_mood();
         }
         // Resize animation: soft spring that settles quickly with a small
         // overshoot, and content that fades in after a tab switch.
@@ -2951,6 +3515,9 @@ pub fn selftest() -> String {
             a.queue.clear();
             a.expanded = false;
             a.hidden = false;
+            out += &format!("INFO Do Not Disturb / focus on this PC right now: {} (tests below force it either way)\n", notifs::quiet());
+            notifs::QUIET_OVERRIDE.store(2, std::sync::atomic::Ordering::Relaxed);
+            FORCE_VISIBLE.store(true, std::sync::atomic::Ordering::Relaxed);
             let was_quiet = notifs::quiet();
             a.call(ni, |m, c| m.action(notifs::A_DEMO, (0.0, 0.0), c));
             a.frame();
@@ -2974,6 +3541,56 @@ pub fn selftest() -> String {
                 out += "INFO Do Not Disturb is on: notification display tests skipped\n";
             }
             out += &format!("INFO focus/Do Not Disturb state: {:?} (0 = off)\n", notifs::focus_profile());
+            // Read what's in Notification Center now, step by step, on a
+            // background (MTA) thread like the watcher, with a time limit, so
+            // a hanging step is named instead of freezing the self-test.
+            {
+                let trace = std::sync::Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+                let tr = trace.clone();
+                let (tx, rx) = std::sync::mpsc::channel();
+                std::thread::spawn(move || {
+                    unsafe {
+                        let _ = windows::Win32::System::Com::CoInitializeEx(None, windows::Win32::System::Com::COINIT_MULTITHREADED);
+                    }
+                    let log = |s: String| tr.lock().unwrap().push(s);
+                    let t0 = std::time::Instant::now();
+                    let ms = |t: std::time::Instant| t.elapsed().as_secs_f64() * 1000.0;
+                    let list = windows::UI::Notifications::Management::UserNotificationListener::Current()
+                        .and_then(|l| l.GetNotificationsAsync(windows::UI::Notifications::NotificationKinds::Toast))
+                        .and_then(|op| op.get());
+                    let Ok(list) = list else {
+                        log(format!("list failed: {:?}", list.err()));
+                        let _ = tx.send(());
+                        return;
+                    };
+                    log(format!("list: {} in {:.0} ms", list.Size().unwrap_or(0), ms(t0)));
+                    let mut done: Vec<String> = Vec::new();
+                    for n in list {
+                        let info = n.AppInfo().ok();
+                        let app = info.as_ref().and_then(|i| i.DisplayInfo().ok()).and_then(|d| d.DisplayName().ok()).map(|s| s.to_string()).unwrap_or_default();
+                        if done.contains(&app) {
+                            continue;
+                        }
+                        done.push(app.clone());
+                        let t = std::time::Instant::now();
+                        log(format!("{app}: reading..."));
+                        let note = notifs::read_note(&n);
+                        log(format!(
+                            "{app}: read in {:.0} ms total, icon {}, title {} chars, body {} chars",
+                            ms(t),
+                            if note.icon.is_some() { "yes" } else { "no" },
+                            note.title.chars().count(),
+                            note.body.chars().count()
+                        ));
+                    }
+                    let _ = tx.send(());
+                });
+                let finished = rx.recv_timeout(std::time::Duration::from_secs(15)).is_ok();
+                for line in trace.lock().unwrap().iter() {
+                    out += &format!("INFO center: {line}\n");
+                }
+                out += &format!("{:<4} reading Notification Center finishes (15 s limit)\n", if finished { "OK" } else { "FAIL" });
+            }
             // Live: a silent test notification (straight to Notification
             // Center, no banner, no sound) must reach the notch.
             a.toast = None;
@@ -3025,7 +3642,8 @@ pub fn selftest() -> String {
                 _ => out += "FAIL a real Windows notification never reached the notch (5 s)\n",
             }
             // Three arrive during a full-screen game: nothing shows until the
-            // notch is back, then the newest with "+2 more".
+            // notch is back, then the newest with "+2 more". (Do Not Disturb
+            // holds them the same way, so this needs it off.)
             if !quiet {
                 a.toast = None;
                 a.queue.clear();
@@ -3041,6 +3659,24 @@ pub fn selftest() -> String {
                 let sub = a.toast.as_ref().map(|t| t.0.sub.clone()).unwrap_or_default();
                 out += &format!("{:<4} notifications during full screen wait, then show as one ({sub})\n", if held && sub.ends_with("(+2 more)") { "OK" } else { "FAIL" });
             }
+            // Do Not Disturb holds notifications too (never drops them).
+            {
+                a.toast = None;
+                a.queue.clear();
+                notifs::QUIET_OVERRIDE.store(1, std::sync::atomic::Ordering::Relaxed);
+                for _ in 0..2 {
+                    a.call(ni, |m, c| m.action(notifs::A_DEMO_INBOX, (0.0, 0.0), c));
+                }
+                a.tick();
+                let held = a.toast.is_none() && a.queue.iter().all(|t| t.key != "notif");
+                notifs::QUIET_OVERRIDE.store(2, std::sync::atomic::Ordering::Relaxed);
+                a.tick();
+                a.frame();
+                let sub = a.toast.as_ref().map(|t| t.0.sub.clone()).unwrap_or_default();
+                out += &format!("{:<4} notifications during Do Not Disturb wait, then show ({sub})\n", if held && sub.ends_with("(+1 more)") { "OK" } else { "FAIL" });
+            }
+            notifs::QUIET_OVERRIDE.store(0, std::sync::atomic::Ordering::Relaxed);
+            FORCE_VISIBLE.store(false, std::sync::atomic::Ordering::Relaxed);
             a.settings.notif_on = had;
             a.settings.save();
             a.tick();
@@ -3491,6 +4127,7 @@ pub fn render_demo(dir: &std::path::Path) -> String {
         let clip = find(a, "Clipboard").unwrap_or(0);
         let notes = find(a, "Notifications").unwrap_or(0);
         let privacy = find(a, "Privacy").unwrap_or(usize::MAX);
+        let prayer = find(a, "Prayer Times").unwrap_or(usize::MAX);
         a.call(clip, |m, c| m.action(crate::modules::clipboard::A_DEMO_DOCS, (0.0, 0.0), c));
         a.tab = music;
         a.tick();
@@ -3500,6 +4137,17 @@ pub fn render_demo(dir: &std::path::Path) -> String {
         d.scene("intro");
         d.sub("A Dynamic Island for Windows. Free and open source.");
         d.wait(2.6);
+
+        // The welcome tour's last two steps: the basics, and Settings at a glance.
+        d.scene("tour");
+        d.sub("A short welcome tour shows the basics");
+        d.a.onboarding = Some(2);
+        d.wait(2.4);
+        d.sub("and what you can change in Settings");
+        d.a.onboarding = Some(3);
+        d.wait(2.8);
+        d.a.onboarding = None;
+        d.wait(0.5);
 
         d.scene("styles");
         for (s, text) in [
@@ -3534,7 +4182,17 @@ pub fn render_demo(dir: &std::path::Path) -> String {
             (water, "Water reminder"),
             (shelf, "A shelf for files you're working on"),
             (clip, "Clipboard history"),
+            (prayer, "Prayer times, worked out on your PC"),
         ] {
+            if i == usize::MAX {
+                continue;
+            }
+            if i == prayer {
+                // Reminders on for the five prayers (bells lit).
+                for k in [0u32, 2, 3, 4, 5] {
+                    d.a.call(prayer, |m, c| m.action(90 + k, (0.0, 0.0), c));
+                }
+            }
             // Start the timers only now, so music is the closed notch's
             // live activity everywhere else in the video.
             if i == timer {
@@ -3546,6 +4204,17 @@ pub fn render_demo(dir: &std::path::Path) -> String {
             d.sub(text);
             d.wait(0.95);
         }
+        // The mouse wheel walks back through the panels.
+        d.sub("Or roll the mouse wheel to switch panels");
+        // Over the header (not a list, which would scroll instead).
+        let content = (d.a.tab_bar.r() - 70.0, d.a.tab_bar.cy());
+        d.move_to(content.0, content.1, 0.4);
+        for _ in 0..3 {
+            d.wait(0.35);
+            d.log += &format!("wheel {}\n", d.n);
+            d.a.on_wheel(1.0);
+            d.wait(0.35);
+        }
         d.a.call(timer, |m, c| m.action(4, (0.0, 0.0), c)); // reset
         d.a.call(pomo, |m, c| m.action(2, (0.0, 0.0), c)); // reset
 
@@ -3556,6 +4225,12 @@ pub fn render_demo(dir: &std::path::Path) -> String {
         d.a.call(notes, |m, c| m.action(crate::modules::notifs::A_DEMO, (0.0, 0.0), c));
         d.wait(2.6);
         d.a.toast = None;
+        if prayer != usize::MAX {
+            d.sub("A reminder at each prayer time");
+            d.a.call(prayer, |m, c| m.action(crate::modules::prayer::A_DEMO, (0.0, 0.0), c));
+            d.wait(2.4);
+            d.a.toast = None;
+        }
         d.sub("Charging, battery, volume, Wi-Fi and Bluetooth");
         d.a.push_toast(Toast::new("power", glyph::CHARGING, col::GREEN, "Charging", "Charger connected").right("70%").progress(0.7).secs(1.8));
         d.wait(2.2);
@@ -3577,8 +4252,16 @@ pub fn render_demo(dir: &std::path::Path) -> String {
             d.click_at(SETTINGS, S_MASCOT + k, 0.45);
             d.wait(0.5);
         }
+        d.click_at(SETTINGS, S_MASCOT_ALWAYS, 0.45);
+        d.sub("Keep the mascot out all the time, left, center or right");
+        d.wait(0.5);
+        d.click_at(SETTINGS, S_MASCOT_POS, 0.4);
+        d.wait(0.6);
         d.click_at(SETTINGS, S_PAGE + 1, 0.5);
         d.sub("Notifications, mic dots and clipboard: all opt-in");
+        d.wait(1.6);
+        d.click_at(SETTINGS, S_PAGE + 2, 0.5);
+        d.sub("Hide the panels you don't use");
         d.wait(1.6);
         d.click_at(SETTINGS, S_PAGE, 0.4);
         d.wait(0.3);
@@ -3614,6 +4297,17 @@ fn draw_mascot(ui: &mut Ui, area: Rect, kind: Mascot, mood: Mood, t: f64, origin
     }
     let mood = if mood == Mood::Clock { Mood::Eyes } else { mood };
     mascot::draw(ui, area, kind, mood, t, look);
+}
+
+/// Short names for Settings > Panels.
+fn panel_name(title: &'static str) -> &'static str {
+    match title {
+        "Now Playing" => "Music",
+        "TodoList" => "To-do",
+        "Water Reminder" => "Water",
+        "Prayer Times" => "Prayer",
+        t => t,
+    }
 }
 
 /// Short chip labels for the clipboard capture setting.

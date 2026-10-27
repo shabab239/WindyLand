@@ -66,12 +66,13 @@ pub struct Shelf {
     items: Vec<Item>,
     drag_hover: bool,
     scroll: f32,
+    max_scroll: f32,
 }
 
 impl Shelf {
     pub fn load() -> Shelf {
         let items = store::read("shelf.txt").lines().filter_map(|l| Item::from_path(l.trim())).collect();
-        Shelf { items, drag_hover: false, scroll: 0.0 }
+        Shelf { items, drag_hover: false, scroll: 0.0, max_scroll: 0.0 }
     }
 
     fn save(&self) {
@@ -127,6 +128,7 @@ impl Module for Shelf {
         let content_w = self.items.len() as f32 * (tile_w + gap) - gap;
         let max_scroll = (content_w - r.w).max(0.0);
         self.scroll = self.scroll.clamp(0.0, max_scroll);
+        self.max_scroll = max_scroll;
         ui.push_clip(r);
         for (i, it) in self.items.iter().enumerate() {
             let x = r.x + i as f32 * (tile_w + gap) - self.scroll;
@@ -187,8 +189,12 @@ impl Module for Shelf {
         }
     }
 
-    fn scroll(&mut self, delta: f32) {
+    fn scroll(&mut self, delta: f32) -> bool {
+        if self.max_scroll < 1.0 {
+            return false;
+        }
         self.scroll -= delta * 60.0;
+        true
     }
 
     fn drop_files(&mut self, paths: Vec<String>, _ctx: &mut Ctx) -> bool {

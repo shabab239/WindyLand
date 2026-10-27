@@ -30,6 +30,12 @@ open, move away to close. Free and open source.
 Battery, network, Caps Lock, keyboard language, volume and Bluetooth alerts are
 built in, and a dot shows while any app uses your microphone or camera.
 
+**Prayer times** are calculated on your PC (no internet), for 16 Bangladesh
+cities or any latitude and longitude, with Karachi, MWL, ISNA, Egypt or Makkah
+methods, Shafi or Hanafi Asr, per-prayer minute nudges and optional reminders.
+Hide any panel you don't use in Settings > Panels, and roll the mouse wheel on
+the open notch to switch panels.
+
 <img src="docs/images/settings.png" alt="Settings">
 
 | | |
@@ -41,7 +47,7 @@ Your data stays on your PC. The only network requests are to
 [LRCLIB](https://lrclib.net) for lyrics and to GitHub to check for updates.
 Notifications, clipboard history and the mic and camera dots are read
 locally, and notifications and clipboard history are off until you turn them
-on.
+on. See the [privacy policy](PRIVACY.md).
 
 ## Install
 

@@ -693,12 +693,14 @@ impl Module for Music {
         }
     }
 
-    fn scroll(&mut self, delta: f32) {
-        if self.show_lyrics {
-            let base = self.manual_scroll.map_or(self.lyric_scroll, |(s, _)| s);
-            // Timestamp is filled in on the next draw (we don't have the clock here).
-            self.manual_scroll = Some(((base - delta * 40.0).max(-40.0), -1.0));
+    fn scroll(&mut self, delta: f32) -> bool {
+        if !self.show_lyrics {
+            return false;
         }
+        let base = self.manual_scroll.map_or(self.lyric_scroll, |(s, _)| s);
+        // Timestamp is filled in on the next draw (we don't have the clock here).
+        self.manual_scroll = Some(((base - delta * 40.0).max(-40.0), -1.0));
+        true
     }
 
     fn live(&self) -> Option<u8> {

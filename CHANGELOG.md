@@ -2,17 +2,46 @@
 
 ## 0.1.18
 
-- Windows notifications in the notch (opt-in: Settings > Privacy & alerts).
+- Windows notifications in the notch (opt-in: Settings > Privacy).
   Other apps' notifications drop out of the notch with the app's icon and
   colour; click to open the app, or mute an app. Message text can be hidden
-  (app name only). Stays quiet during Do Not Disturb; notifications that
-  arrive during a full-screen game or video wait and show as one ("+2 more").
+  (app name only). Notifications that arrive during Do Not Disturb or focus
+  (which Windows 11 turns on by itself for games and full-screen apps), or
+  during a full-screen game or video, wait and then show as one ("+2 more").
   Windows' own banner keeps showing unless you turn banners off, and
   Settings links straight there. Uses Windows' notification listener (no
   signing or packaging needed) and only looks when Windows' notification
-  database changes, so it costs nothing while nothing arrives.
-- Settings has two pages on the right: General, and Privacy & alerts
-  (notifications, mic and camera dots, clipboard history).
+  database changes, so it costs nothing while nothing arrives. App icons
+  come from the shell (the app's Start icon), which works for Store apps like
+  WhatsApp and desktop apps alike, and a watchdog restarts the watcher if a
+  call into Windows ever stops responding.
+- Prayer times panel. Times are calculated on your PC from the sun's
+  position (nothing is fetched): pick one of 16 Bangladesh cities or type a
+  latitude and longitude, choose the method (Karachi, MWL, ISNA, Egypt,
+  Makkah) and Shafi or Hanafi Asr, and nudge any prayer by a few minutes to
+  match your mosque. Shows the next prayer with a countdown; optional
+  reminders per prayer (on time or 5 to 15 minutes before) and a countdown in
+  the closed notch for the last 15 minutes. Reminders are off until you turn
+  them on.
+- Settings > Panels: show or hide any panel. A hidden panel is fully off (no
+  tab, no reminders, and clipboard history stops recording). One panel always
+  stays.
+- The mouse wheel on the open notch switches panels (down for the next).
+  Lists that can scroll (to-do, clipboard, lyrics) still scroll, and the
+  wheel over the tab bar always switches. The timer's hidden "wheel changes
+  the duration" is gone (it has buttons).
+- Mascot: **Always** shows it all the time, not only when idle, and
+  **Left / Center / Right** places it in the notch, with the clock or the
+  live activity (music, timer, prayer countdown) beside it.
+- The welcome tour has a new last step, Settings at a glance (style, mascot,
+  sounds, panels, notifications, clipboard, prayer times, updates), with an
+  **Open Settings** button, and its tips now include the mouse wheel.
+- The README demo starts with the welcome tour and shows the mouse wheel,
+  the prayer panel and reminder, mascot placement and the Panels page.
+- Settings has three pages on the right: General, Privacy (notifications,
+  mic and camera dots, clipboard history) and Panels.
+- Privacy policy (PRIVACY.md), linked from Settings > General and the
+  README.
 - Fixed animations stalling to a few frames a second on an otherwise idle
   screen: frames were paced with DwmFlush, which waits for the next desktop
   composition (about 250 ms when nothing else changes). Frames now sleep

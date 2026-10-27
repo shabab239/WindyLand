@@ -81,6 +81,13 @@ impl Rect {
         Rect::new(self.cx() - w / 2.0, self.cy() - h / 2.0, w, h)
     }
     /// Split horizontally into `n` equal columns with `gap` between.
+    /// Split into `n` equal rows separated by `gap`.
+    pub fn rows(&self, n: usize, gap: f32) -> Vec<Rect> {
+        let n = n.max(1);
+        let h = (self.h - gap * (n - 1) as f32) / n as f32;
+        (0..n).map(|i| Rect::new(self.x, self.y + i as f32 * (h + gap), self.w, h)).collect()
+    }
+
     pub fn columns(&self, n: usize, gap: f32) -> Vec<Rect> {
         let n = n.max(1);
         let cw = (self.w - gap * (n as f32 - 1.0)) / n as f32;

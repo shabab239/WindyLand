@@ -19,6 +19,7 @@ pub mod example;
 pub mod music;
 pub mod notifs;
 pub mod pomodoro;
+pub mod prayer;
 pub mod privacy;
 pub mod shelf;
 pub mod system;
@@ -45,6 +46,7 @@ pub fn all(hwnd: HWND) -> Vec<Box<dyn Module>> {
         Box::new(todo::Todo::load()),
         Box::new(shelf::Shelf::load()),
         Box::new(clipboard::Clipboard::new(hwnd)),
+        Box::new(prayer::Prayer::load()),
         Box::new(system::System::new(hwnd)),
         Box::new(privacy::Privacy::new()),
         Box::new(notifs::Notifs::new(hwnd)),
@@ -190,8 +192,11 @@ pub trait Module {
     fn draw(&mut self, ui: &mut Ui, r: Rect) {}
     /// A registered hit was clicked.
     fn action(&mut self, id: u32, rel: Rel, ctx: &mut Ctx) {}
-    /// Mouse wheel over the panel (positive = up).
-    fn scroll(&mut self, delta: f32) {}
+    /// Mouse wheel over the panel (positive = up). Return true if the module
+    /// used it (a list that scrolls); otherwise the wheel switches panels.
+    fn scroll(&mut self, delta: f32) -> bool {
+        false
+    }
     /// Key press while this module holds keyboard focus. Return true if handled.
     fn key(&mut self, vk: u16, ctrl: bool, ctx: &mut Ctx) -> bool {
         false

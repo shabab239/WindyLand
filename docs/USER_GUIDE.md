@@ -9,6 +9,7 @@
 - [Pomodoro](#pomodoro)
 - [To-do with reminders](#to-do-with-reminders)
 - [Water reminder](#water-reminder)
+- [Prayer times](#prayer-times)
 - [File shelf](#file-shelf)
 - [Clipboard history](#clipboard-history)
 - [Mic and camera dots](#mic-and-camera-dots)
@@ -22,7 +23,7 @@
 ## Getting started
 
 1. Run `WindyLandSetup-<version>.exe`. Tick **Start WindyLand when Windows starts** if you like.
-2. The notch opens with a short **welcome tour**: pick how it looks when closed (Full, Compact, Pill or Hidden), pick the screen edge, and read three quick tips. You can skip it, and replay it later from the tray icon's menu (**Welcome tour**). Everything you pick can be changed later in Settings.
+2. The notch opens with a short **welcome tour**: pick how it looks when closed (Full, Compact, Pill or Hidden), pick the screen edge, read three quick tips (hover to open, the mouse wheel switches panels, right-drag to move it), and see what's in Settings at a glance. **Open Settings** on the last step goes straight there. You can skip it, and replay it later from the tray icon's menu (**Welcome tour**). Everything you pick can be changed later in Settings.
 
    <img src="images/tour.png" alt="Welcome tour">
 
@@ -33,7 +34,8 @@
 
 - **Hover** the notch to open it. Move the mouse away and it closes.
 - **Click** the notch to open it straight away.
-- The icons along the top of the open panel switch between features.
+- The icons along the top of the open panel switch between features. The **mouse wheel** does too: roll down for the next panel, up for the previous one. On a list that scrolls (to-do, clipboard, lyrics) the wheel scrolls the list; over the icons it always switches.
+- Don't use a panel? Hide it in **Settings > Panels**.
 - The smaller styles (Compact, Pill, Hidden) wait a moment before opening, so reaching for browser tabs does not open them by accident.
 
 <img src="images/music.png" alt="Open panel">
@@ -123,6 +125,17 @@ WindyLand remembers your last duration.
 
 The gear button opens settings: bottle size, daily goal, sip size, active hours and reminders on or off. **Reset today** asks before clearing.
 
+## Prayer times
+
+- Today's Fajr, Sunrise, Dhuhr, Asr, Maghrib and Isha, with the next prayer, a countdown and the current prayer highlighted.
+- Times are calculated on your PC from the sun's position for your place and date, so they follow the seasons and need no internet. They use your PC's time zone.
+- The **bell** beside a prayer turns its reminder on. Reminders are off until you turn them on.
+- The gear opens three pages:
+  - **Location**: one of 16 Bangladesh cities, or **Custom location** to type a latitude and longitude (for example `23.81, 90.41`) and press Enter.
+  - **Method**: Karachi (University of Islamic Sciences, the usual choice in Bangladesh), MWL, ISNA, Egypt or Makkah; Shafi or Hanafi Asr; reminders on time or 5, 10 or 15 minutes before; and a countdown in the closed notch for the last 15 minutes before a prayer.
+  - **Adjust**: move any prayer a minute earlier or later (up to 30) to match your mosque or calendar.
+- The default is Dhaka, Karachi method, Hanafi Asr.
+
 ## File shelf
 
 <img src="images/shelf.png" alt="Shelf">
@@ -155,11 +168,11 @@ The gear button opens settings: bottle size, daily goal, sip size, active hours 
 
 WindyLand can show other apps' notifications (messages, mail, calendar, browser sites) in the notch, with the app's icon and colour, instead of Windows' banner in the corner.
 
-- Turn it on in **Settings > Privacy & alerts > Show them in the notch**. It's off until you do.
+- Turn it on in **Settings > Privacy > Show them in the notch**. It's off until you do.
 - Windows keeps showing its own banner too, unless you turn banners off: click **Windows banners** in the same place (or open Windows **Settings > System > Notifications**) and turn off **Show notification banners** for the apps you want in the notch only. Notifications still go to Notification Center as usual.
 - **Click** a notification (or **Open**) to open the app that sent it. **Mute app** stops that app's notifications appearing in the notch; **Unmute** in Settings brings them all back. Buttons inside a notification (Reply, Accept) only work in Windows' own banner.
 - **Include message text** off shows only the app's name, handy if you share your screen.
-- Nothing shows while **Do Not Disturb** is on, and a notification that arrives during a full-screen game or video waits until you're back (several at once show as the newest one, "+2 more").
+- Notifications that arrive while **Do Not Disturb** or focus is on, or during a full-screen game or video, wait until it's over, then the newest shows with a count of the rest ("+2 more"). Windows 11 turns focus on by itself during games and full-screen apps.
 - How it works: WindyLand asks Windows for the notifications in Notification Center, the same permission other notification tools use (Windows **Settings > Privacy & security > Notifications**). It checks only when Windows records a new one. Nothing is stored or sent anywhere.
 
 ## Alerts and overlays
@@ -182,32 +195,36 @@ In the **Full** style, after a while with nothing going on, the clock turns into
 
 Pick one in **Settings > Mascot**: Eyes, Cat, Ghost, Robot, Sparky (an electric hamster), Sprout (a tiny tree), Owl or Panda. Hover a tile to see it wave. **Clock** turns the mascot off.
 
+- **Always** shows the mascot all the time instead of waiting for a quiet moment, even next to music or a timer.
+- **Left**, **Center** or **Right** places it in the notch. At the left or right, the clock (or the music, timer or prayer countdown) sits beside it; the notch grows a little to make room. This applies on the top and bottom edges.
+
 ## Settings and your data
 
 <img src="images/settings.png" alt="Settings">
 
 <img src="images/settings-privacy.png" alt="Privacy and alerts">
 
-Open Settings with the **gear** at the end of the tab bar, a plain **right-click** on the notch, or a **left-click** on the tray icon. The notch opens into a large settings panel. Style, position, mascot and sound are on the left; the right side has two pages, **General** and **Privacy & alerts**:
+Open Settings with the **gear** at the end of the tab bar, a plain **right-click** on the notch, or a **left-click** on the tray icon. The notch opens into a large settings panel. Style, position, mascot and sound are on the left; the right side has three pages, **General**, **Privacy** and **Panels**:
 
 | Item | What it does |
 |---|---|
 | Notch style | Full, Compact, Pill or Hidden |
 | Position | Top, Bottom, Left, Right, Center |
-| Mascot | Which companion shows when idle, or Clock for none |
+| Mascot | Which companion shows, or Clock for none; **Always** and **Left / Center / Right** |
 | Sound for reminders | Chime, Bell, Pop, Marimba, Windows (your system sound) or Off; picking one plays it |
 | **General** page: Start with Windows | Launch at sign-in |
 | Volume overlay | Show volume changes |
 | Check for updates | Looks for a newer version now |
 | Open data folder | Opens `%APPDATA%\WindyLand` |
-| GitHub page / Quit WindyLand | |
-| **Privacy & alerts** page: Windows notifications | Show them in the notch, include message text, Windows banners, unmute apps |
+| GitHub page / Privacy policy / Quit WindyLand | The privacy policy is [PRIVACY.md](../PRIVACY.md) |
+| **Privacy** page: Windows notifications | Show them in the notch, include message text, Windows banners, unmute apps |
 | Mic & camera dots | Dots while the mic or camera is in use |
 | Clipboard history | Record on/off, and Text, Text + files or Everything |
+| **Panels** page | Show or hide each panel. A hidden panel is off: no tab and no reminders. One always stays |
 
 Right-clicking the tray icon shows a short menu: Settings, Welcome tour, Check for updates, About and Exit. Resting the mouse on any icon button shows what it does.
 
-Everything is stored as plain text in `%APPDATA%\WindyLand` (`settings.txt`, `todo.txt`, `water.txt`, `shelf.txt`, `clipboard.txt`). Uninstalling from **Settings > Apps** asks whether to delete it too.
+Everything is stored as plain text in `%APPDATA%\WindyLand` (`settings.txt`, `todo.txt`, `water.txt`, `prayer.txt`, `shelf.txt`, `clipboard.txt`). Uninstalling from **Settings > Apps** asks whether to delete it too.
 
 ## Updates
 

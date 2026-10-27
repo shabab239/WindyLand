@@ -192,11 +192,12 @@ def ease(p):
 
 STEPS = {
     "intro": ("", "WindyLand"),
-    "styles": ("01 · NOTCH STYLES", "Four looks, one notch"),
-    "open": ("02 · HOVER TO OPEN", "Your music, right there"),
-    "tabs": ("03 · ONE CLICK AWAY", "Everything in one place"),
-    "alerts": ("04 · ALERTS", "Alerts that feel native"),
-    "settings": ("05 · SETTINGS", "Make it yours"),
+    "tour": ("01 · WELCOME TOUR", "Learn it in a minute"),
+    "styles": ("02 · NOTCH STYLES", "Four looks, one notch"),
+    "open": ("03 · HOVER TO OPEN", "Your music, right there"),
+    "tabs": ("04 · CLICK OR SCROLL", "Everything in one place"),
+    "alerts": ("05 · ALERTS", "Alerts that feel native"),
+    "settings": ("06 · SETTINGS", "Make it yours"),
     "outro": ("FREE AND OPEN SOURCE", "Get WindyLand"),
 }
 
@@ -355,6 +356,7 @@ def make_demo(data: Path):
     subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-i", str(mp4), "-vf", f"{vf},palettegen=max_colors=128:stats_mode=diff", str(pal)], check=True)
     subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-i", str(mp4), "-i", str(pal), "-lavfi",
                     f"{vf}[x];[x][1:v]paletteuse=dither=bayer:bayer_scale=4:diff_mode=rectangle", str(gif)], check=True)
+    shutil.copy(out / "demo.log", WORK / "demo.log")  # scene and caption timings
     shutil.rmtree(out)
     print(f"demo: {mp4} ({mp4.stat().st_size // 1024} KB), {gif} ({gif.stat().st_size // 1024} KB)")
 

@@ -51,6 +51,7 @@ pub struct Todo {
     tasks: Vec<Task>,
     next_id: u32,
     scroll: f32,
+    max_scroll: f32,
     editor: Option<Editor>,
 }
 
@@ -80,7 +81,7 @@ impl Todo {
             next_id = next_id.max(id + 1);
             tasks.push(task);
         }
-        Todo { tasks, next_id, scroll: 0.0, editor: None }
+        Todo { tasks, next_id, scroll: 0.0, max_scroll: 0.0, editor: None }
     }
 
     fn save(&self) {
@@ -195,6 +196,7 @@ impl Todo {
         let row_h = 30.0;
         let max_scroll = (order.len() as f32 * row_h - r.h).max(0.0);
         self.scroll = self.scroll.clamp(0.0, max_scroll);
+        self.max_scroll = max_scroll;
         ui.push_clip(r);
         let now = unix_now();
         for (i, t) in order.iter().enumerate() {
@@ -394,8 +396,12 @@ impl Module for Todo {
         }
     }
 
-    fn scroll(&mut self, delta: f32) {
+    fn scroll(&mut self, delta: f32) -> bool {
+        if self.max_scroll < 1.0 || self.editor.is_some() {
+            return false;
+        }
         self.scroll -= delta * 30.0;
+        true
     }
 
     fn key(&mut self, vk: u16, ctrl: bool, ctx: &mut Ctx) -> bool {

@@ -336,14 +336,6 @@ impl Module for Timer {
         }
     }
 
-    fn scroll(&mut self, delta: f32) {
-        // Wheel over an idle countdown nudges the duration by a minute.
-        if self.view == View::Countdown && self.idle() {
-            self.duration = (self.duration + delta.signum() as f64 * 60.0).clamp(60.0, 24.0 * 3600.0);
-            self.left = self.duration;
-        }
-    }
-
     fn live(&self) -> Option<u8> {
         if self.running {
             Some(58)
