@@ -110,6 +110,12 @@ Copy `src/modules/example.rs` and register it in `modules::all()`.
 Mascots live in `src/mascot.rs`: add a variant to `store::Mascot` and a draw
 function.
 
+## Credits
+
+WindyLand was inspired by [Nusa](https://rama2555.github.io/nusa/), a
+living notch for Windows by rama2555. WindyLand is written from scratch and shares no
+code with Nusa.
+
 ## License
 
 [MIT](LICENSE)
