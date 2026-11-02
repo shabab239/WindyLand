@@ -633,9 +633,14 @@ impl Agents {
         }
         // Hermes runs from your home folder: name it by where it runs instead.
         let cwd_project = |s: &dyn Fn(&str) -> String| {
-            let p = project_of(&s("cwd"));
+            let cwd = s("cwd");
+            let p = project_of(&cwd);
+            // A home folder (C:\Users\<anyone>, whatever USERNAME says) or
+            // Hermes' own folder isn't a project.
+            let parent = std::path::Path::new(cwd.trim_end_matches(['\\', '/'])).parent().and_then(|x| x.file_name()).map(|x| x.to_string_lossy().to_string()).unwrap_or_default();
             let user = std::env::var("USERNAME").unwrap_or_default();
-            if agent == "hermes" && (s("cwd").is_empty() || p.eq_ignore_ascii_case(&user) || p.eq_ignore_ascii_case("hermes-agent")) {
+            let is_home = parent.eq_ignore_ascii_case("Users") || p.eq_ignore_ascii_case(&user);
+            if agent == "hermes" && (cwd.is_empty() || is_home || p.eq_ignore_ascii_case("hermes-agent")) {
                 let surface = s("surface");
                 if surface.is_empty() { "chat".to_string() } else { surface }
             } else {
