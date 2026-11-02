@@ -2,8 +2,8 @@
 # self-test, build the installer.
 #   .\build.ps1                      -> dist\WindyLandSetup-<version>.exe
 #   .\build.ps1 -OutDir $HOME\Desktop
-# GitHub Actions (release.yml) builds in two halves so the exe can be signed
-# before it goes into the installer:
+# GitHub Actions (release.yml) builds in two halves (a step can go between
+# them, e.g. signing the exe before it goes into the installer):
 #   .\build.ps1 -SkipInstaller -NoSelfTest   (exe only)
 #   .\build.ps1 -InstallerOnly               (installer from the existing exe)
 param(
@@ -52,8 +52,8 @@ public static class IconStamp {
 [IconStamp]::Apply($exe, "$PSScriptRoot\assets\windyland.ico")
 Write-Host "Icon embedded"
 
-# Version info (product name and version, shown in the file's Properties and
-# required for code signing): a VS_VERSIONINFO resource built by hand.
+# Version info (product name and version, shown in the file's Properties):
+# a VS_VERSIONINFO resource built by hand.
 Add-Type -TypeDefinition @"
 using System; using System.IO; using System.Text; using System.Collections.Generic; using System.Runtime.InteropServices;
 public static class VersionStamp {
