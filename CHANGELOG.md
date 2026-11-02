@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.1.19
 
 - AI agents tab: connect Hermes, Claude Code and Codex CLI with one switch, and the
   notch shows when they're working (with a timer), need your OK (pops up,

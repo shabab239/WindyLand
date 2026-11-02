@@ -1,6 +1,6 @@
 # Privacy policy
 
-_Last updated: 27 October 2026. Applies to WindyLand 0.1.18 and later._
+_Last updated: 2 November 2026. Applies to WindyLand 0.1.19 and later._
 
 WindyLand is a free, open-source app that runs on your PC. It has no
 accounts, no ads, no analytics and no telemetry. The developer receives no
