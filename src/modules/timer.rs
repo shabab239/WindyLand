@@ -208,6 +208,21 @@ impl Timer {
 }
 
 impl Module for Timer {
+    fn tip(&self, id: u32) -> &'static str {
+        match id {
+            A_MODE_TIMER => "Countdown timer",
+            A_MODE_WATCH => "Stopwatch",
+            A_TOGGLE => "Start or pause",
+            A_RESET => "Reset",
+            A_MINUS => "One minute less",
+            A_PLUS => "One minute more",
+            A_LAP => "Record a lap",
+            i if (A_PRESET..A_PRESET + 10).contains(&i) => "Start a timer for this long",
+            A_T_RESTART => "Run the same timer again",
+            A_T_DISMISS => "Close this notice",
+            _ => "",
+        }
+    }
     fn title(&self) -> &'static str {
         "Timer"
     }

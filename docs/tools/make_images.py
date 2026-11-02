@@ -90,17 +90,40 @@ def seed(data: Path):
 
 
 def album_art(path: Path, n=480):
-    """Abstract cover art: warm sunset gradient with soft hills."""
+    """Made-up cover for "Night Train Home": a rainy night skyline with lit
+    windows, a glowing moon and rain streaks."""
+    rng = np.random.default_rng(3)
     y, x = np.mgrid[0:n, 0:n] / n
-    top = np.array([255, 138, 76]) / 255
-    bottom = np.array([120, 70, 170]) / 255
+    top = np.array([18, 32, 74]) / 255
+    bottom = np.array([20, 120, 140]) / 255
     img = top * (1 - y[..., None]) + bottom * y[..., None]
-    sun = np.exp(-(((x - 0.62) ** 2 + (y - 0.42) ** 2) / 0.012))[..., None]
-    img = img * (1 - 0.8 * sun) + np.array([1.0, 0.92, 0.7]) * 0.8 * sun
-    for k, (amp, base, col) in enumerate([(0.05, 0.68, (60, 40, 110)), (0.04, 0.8, (35, 25, 70))]):
-        hill = base + amp * np.sin(x * (6 + 3 * k) + k)
-        mask = (y > hill)[..., None]
-        img = np.where(mask, np.array(col) / 255, img)
+    moon = np.exp(-(((x - 0.72) ** 2 + (y - 0.24) ** 2) / 0.004))[..., None]
+    halo = np.exp(-(((x - 0.72) ** 2 + (y - 0.24) ** 2) / 0.04))[..., None]
+    img = img + np.array([1.0, 0.85, 0.55]) * (0.9 * moon + 0.18 * halo)
+    # Skyline: blocks of different heights with a few lit windows.
+    sky = np.zeros((n, n), bool)
+    windows = np.zeros((n, n), bool)
+    xs = 0
+    while xs < n:
+        w = int(rng.integers(n // 14, n // 7))
+        top_y = int(n * rng.uniform(0.5, 0.78))
+        sky[top_y:, xs:xs + w] = True
+        for wy in range(top_y + 10, n - 6, 16):
+            for wx in range(xs + 6, xs + w - 6, 12):
+                if rng.random() < 0.35:
+                    windows[wy:wy + 6, wx:wx + 5] = True
+        xs += w + int(rng.integers(0, 4))
+    img = np.where(sky[..., None], np.array([10, 16, 36]) / 255, img)
+    img = np.where(windows[..., None], np.array([255, 196, 92]) / 255, img)
+    # Rain: thin slanted streaks.
+    rain = np.zeros((n, n))
+    for _ in range(260):
+        cx, cy, ln = rng.integers(0, n), rng.integers(0, n), int(rng.integers(8, 22))
+        for k in range(ln):
+            px, py = cx + k // 3, cy + k
+            if 0 <= px < n and 0 <= py < n:
+                rain[py, px] = 0.22
+    img = img + rain[..., None] * np.array([0.7, 0.85, 1.0])
     Image.fromarray((img * 255).clip(0, 255).astype(np.uint8)).save(path)
 
 

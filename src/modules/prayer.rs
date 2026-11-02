@@ -460,6 +460,25 @@ impl Prayer {
 }
 
 impl Module for Prayer {
+    fn tip(&self, id: u32) -> &'static str {
+        match id {
+            A_SETTINGS => "Location, calculation method and minute adjustments",
+            A_DONE => "Back to today's times",
+            i if (A_PAGE..A_PAGE + 5).contains(&i) => "Switch settings page",
+            i if (A_CITY..A_CITY + 30).contains(&i) => "Use this city's times",
+            A_CUSTOM => "Use your own latitude and longitude",
+            i if (A_METHOD..A_METHOD + 10).contains(&i) => "Calculation method (ask your local mosque)",
+            A_ASR => "Shafi, Maliki and Hanbali Asr time",
+            i if i == A_ASR + 1 => "Hanafi Asr time (later)",
+            i if (A_BEFORE..A_BEFORE + 10).contains(&i) => "How early the reminder comes",
+            A_LIVE => "Count down on the closed notch 15 minutes before",
+            i if (A_BELL..A_BELL + 6).contains(&i) => "Reminder for this prayer on or off",
+            i if (A_MINUS..A_MINUS + 6).contains(&i) => "One minute earlier",
+            i if (A_PLUS..A_PLUS + 6).contains(&i) => "One minute later",
+            A_T_OK => "Close this reminder",
+            _ => "",
+        }
+    }
     fn title(&self) -> &'static str {
         "Prayer Times"
     }

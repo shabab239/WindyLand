@@ -143,6 +143,19 @@ fn mmss(s: f64) -> String {
 }
 
 impl Module for Pomodoro {
+    fn tip(&self, id: u32) -> &'static str {
+        match id {
+            A_TOGGLE => "Start or pause the session",
+            A_RESET => "Reset this session",
+            A_SKIP => "Skip to the next session",
+            A_FOCUS => "Focus session (25 min)",
+            A_SHORT => "Short break (5 min)",
+            A_LONG => "Long break (15 min)",
+            A_TOAST_START => "Start the next session now",
+            A_TOAST_LATER => "Not now",
+            _ => "",
+        }
+    }
     fn title(&self) -> &'static str {
         "Pomodoro"
     }

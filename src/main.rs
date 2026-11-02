@@ -24,6 +24,7 @@ mod store;
 mod time;
 mod tray;
 mod ui;
+mod uninstall;
 
 use windows::core::*;
 use windows::Win32::Foundation::*;
@@ -86,12 +87,32 @@ unsafe fn run_loop() {
 }
 
 fn main() {
+    // Run by Claude Code / Codex hooks: hand the event to the notch and quit
+    // at once (no window, no COM).
+    let args: Vec<String> = std::env::args().collect();
+    if args.iter().any(|a| a == "--agent-event") {
+        std::process::exit(modules::agents::hook_main(&args));
+    }
+    // The installer's uninstaller calls this so no hook is left behind.
+    if args.iter().any(|a| a == "--disconnect-agents") {
+        modules::agents::disconnect_all();
+        std::process::exit(0);
+    }
+    if args.iter().any(|a| a == "--uninstall") {
+        unsafe {
+            let _ = SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
+        }
+        std::process::exit(uninstall::run(&args));
+    }
     unsafe {
         let _ = SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
         let _ = OleInitialize(None);
 
         // Docs renders: demo data, fixed clock, no window shown.
         let args: Vec<String> = std::env::args().collect();
+        if args.iter().any(|a| a == "--selftest" || a == "--render-demo" || a == "--render-docs") {
+            modules::agents::ISOLATED.store(true, std::sync::atomic::Ordering::Relaxed);
+        }
         if let Some(i) = args.iter().position(|a| a == "--render-demo") {
             time::DEMO.store(true, std::sync::atomic::Ordering::Relaxed);
             let dir = std::path::PathBuf::from(args.get(i + 1).cloned().unwrap_or_else(|| "demo-render".into()));

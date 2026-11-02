@@ -2,6 +2,37 @@
 
 ## Unreleased
 
+- AI agents tab: connect Hermes, Claude Code and Codex CLI with one switch, and the
+  notch shows when they're working (with a timer), need your OK (pops up,
+  orange) or finish. Only the status passes through; nothing leaves the PC.
+- System monitor tab: CPU, memory and network with a one-minute graph, free
+  disk space and uptime; optional CPU and download speed on the closed notch.
+- Clipboard: search the history (Enter pastes the first match) and save
+  snippets you paste often.
+- Shelf: Screenshot button. Drag over part of the screen (or click for the
+  whole screen); the PNG goes to Pictures\Screenshots, onto the Shelf and
+  onto the clipboard.
+- Uninstall WindyLand... in the tray menu, and `windyland.exe --uninstall`:
+  works even where the installer's own uninstaller is blocked, and
+  disconnects the agents. The installer's uninstaller disconnects them too.
+- The welcome tour has a new step for these panels.
+- New Tools tab, all offline:
+  - Color picker: pick any pixel on any screen with a magnifier, copy it as
+    HEX, RGB or HSL, see its contrast on white and black, last 8 colors kept.
+  - Calculator: answers as you type, with percentages (`200+10%`), powers,
+    roots, trigonometry in degrees, factorials, hex and binary, and a history.
+  - QR code: what you copied (or typed) as a QR code; copy it as an image.
+  - Converter: length, weight, temperature, area, volume, speed and data,
+    including katha, bigha, decimal, maund, seer and tola; and the time in 12
+    cities with daylight saving handled by Windows.
+- Clipboard: clicking an entry pastes it into the app you were using; the
+  new copy icon (on hover) only copies. Apps running as administrator get
+  "Copied, press Ctrl+V" instead.
+- The notch opens on the panel you last picked, also after a restart. A
+  reminder or a file drag that opens another panel doesn't change it.
+- The welcome tour mentions the Tools tab; the demo and screenshots show it.
+- Self-test fixes for GitHub's build servers (no notification listener there,
+  and no mouse movement, which made the mascot doze).
 - Releases are built by GitHub Actions from the version tag
   (`.github/workflows/release.yml`), as a draft release to check and publish.
 - `windyland.exe` and the installer carry version info (product name and

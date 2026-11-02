@@ -71,6 +71,10 @@ Name: "{autodesktop}\WindyLand"; Filename: "{app}\windyland.exe"; Tasks: desktop
 [Run]
 Filename: "{app}\windyland.exe"; Description: "{cm:LaunchProgram,WindyLand}"; Flags: postinstall nowait
 
+[UninstallRun]
+; Remove the Claude Code / Codex hooks so they don't point at a deleted exe.
+Filename: "{app}\windyland.exe"; Parameters: "--disconnect-agents"; Flags: runhidden waituntilterminated; RunOnceId: "DisconnectAgents"
+
 [UninstallDelete]
 Type: filesandordirs; Name: "{app}"
 

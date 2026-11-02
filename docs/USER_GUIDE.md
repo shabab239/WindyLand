@@ -10,6 +10,10 @@
 - [To-do with reminders](#to-do-with-reminders)
 - [Water reminder](#water-reminder)
 - [Prayer times](#prayer-times)
+- [Tools](#tools)
+- [AI agents](#ai-agents)
+- [System monitor](#system-monitor)
+- [Uninstalling](#uninstalling)
 - [File shelf](#file-shelf)
 - [Clipboard history](#clipboard-history)
 - [Mic and camera dots](#mic-and-camera-dots)
@@ -35,6 +39,7 @@
 - **Hover** the notch to open it. Move the mouse away and it closes.
 - **Click** the notch to open it straight away.
 - The icons along the top of the open panel switch between features. The **mouse wheel** does too: roll down for the next panel, up for the previous one. On a list that scrolls (to-do, clipboard, lyrics) the wheel scrolls the list; over the icons it always switches.
+- It always opens on the panel you last picked, even after a restart. (A reminder can open another panel for a moment; next time it's back to yours.)
 - Don't use a panel? Hide it in **Settings > Panels**.
 - The smaller styles (Compact, Pill, Hidden) wait a moment before opening, so reaching for browser tabs does not open them by accident.
 
@@ -136,6 +141,48 @@ The gear button opens settings: bottle size, daily goal, sip size, active hours 
   - **Adjust**: move any prayer a minute earlier or later (up to 30) to match your mosque or calendar.
 - The default is Dhaka, Karachi method, Hanafi Asr.
 
+## AI agents
+
+<img src="images/agents.png" alt="AI agents">
+
+If you use **Hermes**, **Claude Code** or **Codex CLI**, the notch shows what they're doing while you're in another window.
+
+- Open the **AI agents** tab and switch on **Hermes**, **Claude Code** and/or **Codex**. WindyLand adds a hook to the agent's own settings: Hermes shell hooks through `hermes config set` (and Hermes' hook allowlist, so it doesn't ask again), `~/.claude/settings.json`, `~/.codex/config.toml`. Hermes picks it up within a minute; Claude Code and Codex from their next session. Switching it off removes exactly what was added, and so does uninstalling WindyLand.
+- **Working**: the closed notch shows the agent icon and how long it has been at it, with the project folder on the other side.
+- **Needs you**: when Hermes wants your OK for a command, asks a question or needs a password, or Claude Code asks for permission, the notch pops up (with your chime) and turns orange until you answer.
+- **Done**: a short "finished, took 3 min" notice when a turn ends. Codex reports only this one. Stopping Hermes with Esc shows Stopped, without a notice.
+- The tab lists recent sessions; click one to clear it. A session that goes quiet for 20 minutes (you pressed Esc, say) drops back to Ready.
+- Privacy: the hook passes on only the event name, session id, project folder (or where Hermes runs, like desktop), model and tool name, and the agent's notice text. Prompts, code and tool output are never read or stored, and nothing leaves your PC. If Codex already runs its own `notify` program, WindyLand leaves it alone and says so.
+
+## System monitor
+
+<img src="images/monitor.png" alt="System monitor">
+
+- **CPU**, **memory** and **network** (download and upload) with a one-minute graph, plus free space on the Windows drive and how long the PC has been on.
+- **Show on closed notch** puts CPU and download speed on the closed notch all the time. It's off by default.
+- It reads Windows' own counters once a second, so it adds no load.
+
+## Tools
+
+The Tools tab has four small tools; the chips at the top switch between them. Everything works offline.
+
+<img src="images/tools.png" alt="Color picker">
+
+- **Color picker**: **Pick from screen**, then click anywhere. A magnifier under the cursor shows the exact pixel; arrow keys move it one pixel (Shift for ten), and Esc or a right-click cancels. The color is copied as HEX straight away; click HEX, RGB or HSL to copy that form instead. It also shows how readable text in that color is on white and on black, and keeps your last eight colors.
+
+<img src="images/tools-calc.png" alt="Calculator">
+
+- **Calculator**: type a sum and the answer appears as you type. `1250*15%` is 15 % of 1250, `200+10%` adds 10 %, and `2^10`, `sqrt(2)`, `sin(30)` (degrees), `5!`, `pi`, `0xFF` and `0b1010` work too. Enter keeps the result in the history (click one to reuse it), Esc clears, Ctrl+C copies the answer.
+
+<img src="images/tools-qr.png" alt="QR code">
+
+- **QR code**: shows what you last copied as a QR code, so a link gets to your phone with one scan. **Type text** makes one from your own text, and **Copy image** puts the code on the clipboard as a picture.
+
+<img src="images/tools-convert.png" alt="Converter">
+
+- **Converter**: length, weight, temperature, area, volume, speed and data. It includes Bangladesh's units: katha (720 ft²), bigha (20 katha), decimal (1/100 acre), maund (40 seer), seer and tola (vori). Type a number (or a sum), click the units, **Swap** flips them, and clicking the answer copies it.
+- **Zones** shows the time in 12 cities (Dhaka, Kolkata, Dubai, Riyadh, London, Paris, New York, Toronto, Los Angeles, Tokyo, Sydney, Kuala Lumpur), using Windows' own daylight-saving rules. Click a city to compare from it, and use the hour buttons to see "what time will it be there at 6 pm here".
+
 ## File shelf
 
 <img src="images/shelf.png" alt="Shelf">
@@ -144,6 +191,7 @@ The gear button opens settings: bottle size, daily goal, sip size, active hours 
 - **Click** an item to open it. **Drag** it out into a chat, an email or a folder.
 - Hover an item and click the **x** to remove it. **Clear** empties the shelf.
 - The shelf keeps links to your files, not copies.
+- **Screenshot**: the notch closes and the screen freezes; drag over the part you want (or just click for the whole screen), Esc cancels. The picture is saved as a PNG in **Pictures\Screenshots**, added to the Shelf (drag it into a chat) and copied to the clipboard.
 
 ## Clipboard history
 
@@ -152,8 +200,12 @@ The gear button opens settings: bottle size, daily goal, sip size, active hours 
 - Clipboard history is **off** until you turn it on: open the **Clipboard** tab and click **Turn on clipboard history**, or use the switch in Settings.
 - **What it records** (Settings > Clipboard history): **Text** (the default), **Text + files** (files you copy in Explorer), or **Everything** (also pictures, shown as thumbnails).
 - What you copy appears here, newest first. The last 30 are kept, and up to 10 pictures.
-- **Click** an entry to copy it again, then paste with **Ctrl+V** as usual. Copied files paste into Explorer too.
-- Hover an entry to **pin** it (pinned entries stay at the top and are kept after a restart) or **remove** it. **Clear** removes everything that isn't pinned. The switch in the tab header stops and starts recording.
+- **Search** (magnifier icon): type to filter the history; **Enter** pastes the first match, **Esc** clears, Esc again closes.
+- **Snippets** (+ icon): type text you paste often (your address, bKash number, an email signature) and press Enter. It's kept like a pinned entry, even with recording off.
+- **Click** an entry to paste it straight into the app you were using (it presses Ctrl+V for you). Hold **Shift** while clicking to paste as plain text in apps that support Ctrl+Shift+V. Files paste into Explorer too.
+- To only copy it, hover the entry and click the **copy** icon; then paste wherever you like with Ctrl+V.
+- Apps running as administrator don't accept typing from normal apps, so for those the entry is only copied and the notch says **press Ctrl+V**.
+- Hover an entry to **copy** it without pasting, **pin** it (pinned entries stay at the top and are kept after a restart) or **remove** it. **Clear** removes everything that isn't pinned. The switch in the tab header stops and starts recording.
 - Privacy: unpinned entries and all pictures live in memory only and are gone when WindyLand exits. Pinned text and files are saved in `clipboard.txt`. Passwords and codes copied from password managers that mark them private (KeePass, Bitwarden, 1Password and others) are never recorded.
 
 ## Mic and camera dots
@@ -225,7 +277,13 @@ Open Settings with the **gear** at the end of the tab bar, a plain **right-click
 
 Right-clicking the tray icon shows a short menu: Settings, Welcome tour, Check for updates, About and Exit. Resting the mouse on any icon button shows what it does.
 
-Everything is stored as plain text in `%APPDATA%\WindyLand` (`settings.txt`, `todo.txt`, `water.txt`, `prayer.txt`, `shelf.txt`, `clipboard.txt`). Uninstalling from **Settings > Apps** asks whether to delete it too.
+Everything is stored as plain text in `%APPDATA%\WindyLand` (`settings.txt`, `todo.txt`, `water.txt`, `prayer.txt`, `tools.txt`, `shelf.txt`, `clipboard.txt`). Uninstalling from **Settings > Apps** asks whether to delete it too.
+
+## Uninstalling
+
+- **Settings > Apps > WindyLand > Uninstall**, as usual, or **Uninstall WindyLand...** in the tray icon's menu.
+- The tray item works even where Windows blocks the unsigned uninstaller (Smart App Control). It asks whether to keep your data, closes WindyLand, takes it out of startup, disconnects Claude Code and Codex, then removes the app. From a command line: `windyland.exe --uninstall` (`--keep-data`, `--quiet`).
+- Screenshots in Pictures\Screenshots are never deleted.
 
 ## Updates
 

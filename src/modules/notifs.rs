@@ -373,6 +373,15 @@ fn watch(inbox: Arc<Mutex<Vec<Note>>>, hwnd: isize, gen: u32) {
 }
 
 impl Module for Notifs {
+    fn tip(&self, id: u32) -> &'static str {
+        match id {
+            A_OPEN => "Open the app",
+            A_MUTE => "Stop showing this app's notifications in the notch",
+            A_BANNERS => "Windows' notification settings",
+            A_PRIVACY => "Notification privacy settings",
+            _ => "",
+        }
+    }
     fn title(&self) -> &'static str {
         "Notifications"
     }

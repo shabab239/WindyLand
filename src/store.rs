@@ -295,6 +295,8 @@ pub struct Settings {
     /// Look for new versions on GitHub by itself (twice a day). Off: only
     /// when "Check for updates" is clicked. Also set by the installer.
     pub update_check: bool,
+    /// The panel you last picked (module title); the notch opens on it.
+    pub last_tab: String,
     /// Show other apps' Windows notifications in the notch (opt-in).
     pub notif_on: bool,
     /// Include the message text (off: only the app name shows).
@@ -336,6 +338,7 @@ impl Settings {
             mascot_always: kv.get("mascot_always").map_or(false, |v| v == "1"),
             mascot_pos: kv.get("mascot_pos").and_then(|v| v.parse().ok()).filter(|p| *p <= 2).unwrap_or(1),
             update_check: kv.get("update_check").map_or(true, |v| v != "0"),
+            last_tab: kv.get("last_tab").cloned().unwrap_or_default(),
             hidden_panels: kv.get("hidden_panels").map_or(Vec::new(), |v| v.split(',').filter(|s| !s.is_empty()).map(String::from).collect()),
             notif_on: kv.get("notif_on").map_or(false, |v| v == "1"),
             notif_text: kv.get("notif_text").map_or(true, |v| v == "1"),
@@ -364,6 +367,9 @@ impl Settings {
         kv.insert("mascot_pos".into(), self.mascot_pos.to_string());
         kv.insert("hidden_panels".into(), self.hidden_panels.join(","));
         kv.insert("update_check".into(), (self.update_check as u8).to_string());
+        if !self.last_tab.is_empty() {
+            kv.insert("last_tab".into(), self.last_tab.clone());
+        }
         kv.insert("notif_on".into(), (self.notif_on as u8).to_string());
         kv.insert("notif_text".into(), (self.notif_text as u8).to_string());
         write("settings.txt", &write_kv(&kv));

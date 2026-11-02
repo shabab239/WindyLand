@@ -596,6 +596,17 @@ impl Music {
 }
 
 impl Module for Music {
+    fn tip(&self, id: u32) -> &'static str {
+        match id {
+            A_TOGGLE => "Play or pause",
+            A_PREV => "Previous track",
+            A_NEXT => "Next track",
+            A_SEEK => "Click to jump to this point in the song",
+            A_LYRICS => "Show or hide synced lyrics",
+            i if i >= A_LINE && i < A_LINE + 10_000 => "Jump to this line",
+            _ => "",
+        }
+    }
     fn title(&self) -> &'static str {
         "Now Playing"
     }
@@ -766,9 +777,9 @@ fn demo_media() -> MediaInfo {
         .map(Arc::new);
     MediaInfo {
         has: true,
-        title: "Paper Sky".into(),
-        artist: "Lumen Coast".into(),
-        album: "Summer Flows".into(),
+        title: "Night Train Home".into(),
+        artist: "Monsoon Avenue".into(),
+        album: "Rain City".into(),
         app: "Spotify".into(),
         playing: true,
         pos: 134.0,
@@ -783,15 +794,15 @@ impl Music {
     /// Demo lyrics (original lines, not a real song).
     pub fn demo_lyrics(&mut self) {
         let lines = [
-            (112.0, "Wind across the open fields"),
-            (118.0, "carries every word I kept"),
-            (124.0, "Hold the light a little longer"),
-            (129.0, "till the evening finds us here"),
-            (134.0, "Every road we never took"),
-            (139.0, "folds into a paper sky"),
-            (144.0, "Sing it softly, let it fade"),
-            (149.0, "the wind will bring you home"),
-            (155.0, "Wind across the open fields"),
+            (112.0, "Rain on the window, city lights"),
+            (118.0, "every street I know by heart"),
+            (124.0, "Hold the night a little longer"),
+            (129.0, "let the station lights go by"),
+            (134.0, "Night train running home"),
+            (139.0, "to the place where rivers meet"),
+            (144.0, "Hum it softly, let it fade"),
+            (149.0, "the rain will walk me home"),
+            (155.0, "Rain on the window, city lights"),
         ];
         let l = lines.iter().map(|(t, s)| (*t, s.to_string())).collect();
         *self.lyrics.lock().unwrap() = (self.info.key(), Lyrics::Synced(l));

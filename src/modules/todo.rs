@@ -285,6 +285,27 @@ impl Todo {
 }
 
 impl Module for Todo {
+    fn tip(&self, id: u32) -> &'static str {
+        match id {
+            A_ADD => "Add a task",
+            A_SAVE => "Save the task",
+            A_CANCEL => "Discard changes",
+            A_FIELD => "Type the task",
+            A_NO_TIME => "No reminder for this task",
+            A_MINUS => "Earlier reminder",
+            A_PLUS => "Later reminder",
+            A_CLEAR_DONE => "Remove finished tasks",
+            i if (A_QUICK..A_QUICK + 20).contains(&i) => "Remind me at this time",
+            i => match i >> 24 {
+                K_CHECK => "Mark done (or not done)",
+                K_EDIT => "Edit this task",
+                K_DELETE => "Delete this task",
+                K_T_DONE => "Mark it done",
+                K_T_SNOOZE => "Remind me again in 10 minutes",
+                _ => "",
+            },
+        }
+    }
     fn title(&self) -> &'static str {
         "TodoList"
     }
@@ -468,7 +489,7 @@ impl Module for Todo {
     }
 }
 
-fn clipboard_text() -> Option<String> {
+pub(crate) fn clipboard_text() -> Option<String> {
     use windows::Win32::Foundation::HGLOBAL;
     use windows::Win32::System::DataExchange::*;
     use windows::Win32::System::Memory::*;

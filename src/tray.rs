@@ -18,6 +18,7 @@ const ID_TOUR: u32 = 2;
 const ID_UPDATES: u32 = 6;
 const ID_ABOUT: u32 = 8;
 const ID_EXIT: u32 = 9;
+const ID_UNINSTALL: u32 = 10;
 
 const RUN_KEY: PCWSTR = w!("Software\\Microsoft\\Windows\\CurrentVersion\\Run");
 const RUN_NAME: PCWSTR = w!("WindyLand");
@@ -69,6 +70,22 @@ pub fn startup_enabled() -> bool {
     }
 }
 
+/// The startup entry runs this very exe (a copied exe must not switch off
+/// the installed one's startup).
+pub fn startup_points_here() -> bool {
+    unsafe {
+        let mut buf = [0u16; 1024];
+        let mut size = (buf.len() * 2) as u32;
+        if RegGetValueW(HKEY_CURRENT_USER, RUN_KEY, RUN_NAME, RRF_RT_REG_SZ, None, Some(buf.as_mut_ptr() as *mut _), Some(&mut size)).is_err() {
+            return false;
+        }
+        let n = (size as usize / 2).saturating_sub(1).min(buf.len());
+        let v = String::from_utf16_lossy(&buf[..n]);
+        let v = v.trim().trim_matches('"').to_lowercase();
+        v == exe_path().to_lowercase()
+    }
+}
+
 pub fn set_startup(on: bool) {
     unsafe {
         let mut key = HKEY::default();
@@ -101,6 +118,7 @@ pub fn show_menu() {
         item(ID_TOUR, w!("Welcome tour"));
         item(ID_UPDATES, w!("Check for updates"));
         item(ID_ABOUT, w!("About WindyLand"));
+        item(ID_UNINSTALL, w!("Uninstall WindyLand..."));
         let _ = AppendMenuW(menu, MF_SEPARATOR, 0, None);
         item(ID_EXIT, w!("Exit"));
 
@@ -114,6 +132,9 @@ pub fn show_menu() {
         match cmd {
             0 => {}
             ID_ABOUT => about(),
+            ID_UNINSTALL => {
+                let _ = std::process::Command::new(exe_path()).arg("--uninstall").spawn();
+            }
             ID_EXIT => {
                 let _ = DestroyWindow(hwnd);
             }

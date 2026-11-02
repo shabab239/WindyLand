@@ -270,6 +270,25 @@ impl Water {
 }
 
 impl Module for Water {
+    fn tip(&self, id: u32) -> &'static str {
+        match id {
+            A_DRINK => "Log a glass of water",
+            A_SETTINGS => "Bottle size, daily goal and reminder hours",
+            A_BACK => "Back to today",
+            A_RESET => "Clear today's log",
+            A_START_DOWN | A_START_UP => "When reminders start each day",
+            A_END_DOWN | A_END_UP => "When reminders stop each day",
+            A_UNDO => "Undo the last drink",
+            A_TOGGLE_REMIND => "Turn the drink reminders on or off",
+            i if (A_BOTTLE..A_BOTTLE + 10).contains(&i) => "Your bottle or glass size",
+            i if (A_GOAL..A_GOAL + 10).contains(&i) => "How much to drink in a day",
+            i if (A_SIP..A_SIP + 10).contains(&i) => "Log this much",
+            A_T_DRANK => "Log a drink",
+            A_T_SNOOZE => "Remind me again later",
+            A_T_REFILLED => "Log a full bottle",
+            _ => "",
+        }
+    }
     fn title(&self) -> &'static str {
         "Water Reminder"
     }

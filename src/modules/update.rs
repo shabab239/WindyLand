@@ -276,6 +276,16 @@ impl Updater {
 }
 
 impl Module for Updater {
+    fn tip(&self, id: u32) -> &'static str {
+        match id {
+            A_CHECK_NOW => "Look for a new version now",
+            A_UPDATE => "Download and install the new version",
+            A_LATER => "Remind me later",
+            A_SKIP => "Skip this version",
+            A_OPEN_PAGE => "See what's new on GitHub",
+            _ => "",
+        }
+    }
     fn title(&self) -> &'static str {
         "Updates"
     }

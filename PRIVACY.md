@@ -17,9 +17,10 @@ Everything WindyLand keeps is stored as plain text files in
 | `settings.txt` | Your settings (style, position, mascot, sound, and so on) |
 | `todo.txt` | Your to-do tasks and reminder times |
 | `water.txt` | Your water reminder settings and the amounts you logged |
+| `tools.txt` | The colors you picked and your converter choices (calculator history is not saved) |
 | `prayer.txt` | Your prayer times settings: city or the coordinates you typed, method and reminders |
 | `shelf.txt` | The paths of files you put on the shelf (not the files themselves) |
-| `clipboard.txt` | Only clipboard entries you pinned |
+| `clipboard.txt` | Only clipboard entries you pinned, and snippets you saved |
 
 Nothing in these files is sent anywhere. Uninstalling WindyLand asks whether
 to delete this folder too.
@@ -39,6 +40,18 @@ to delete this folder too.
   itself.
 - **System status:** battery, network, volume, Caps Lock, keyboard language
   and Bluetooth state, to show alerts.
+- **System monitor:** Windows' CPU, memory, network and disk counters, read
+  once a second and kept only in memory (the last minute).
+- **AI agents** (off until you connect an agent): when you switch on Hermes,
+  Claude Code or Codex, WindyLand adds a hook to that agent's own settings
+  (Hermes' `hooks:` through `hermes config set` plus its hook allowlist;
+  `~/.claude/settings.json`, with a backup kept next to it;
+  `~/.codex/config.toml`). The hook passes on only the event name,
+  session id, project folder name, tool name and Claude's notice text;
+  prompts, code and tool output are never read. Nothing is stored or sent
+  anywhere, and switching it off (or uninstalling) removes the hook.
+- **Screenshots** (only when you click Screenshot): saved as PNG files in
+  your Pictures\Screenshots folder and listed on the Shelf.
 
 ## When WindyLand goes online
 

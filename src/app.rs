@@ -30,6 +30,8 @@ const WM_MOUSELEAVE: u32 = 0x02A3;
 const CANVAS_W: f32 = 780.0;
 const CANVAS_H: f32 = 360.0;
 const TAB_H: f32 = 30.0;
+/// Space between tab icons (tight: there are up to a dozen tabs).
+const TAB_GAP: f32 = 2.0;
 const PAD: f32 = 16.0;
 /// Tab bar hits use this module index.
 const APP_HIT: usize = usize::MAX;
@@ -51,13 +53,21 @@ const O_BACK: u32 = 2;
 const O_SKIP: u32 = 3;
 const O_STYLE: u32 = 10; // + index into NotchStyle::ALL
 const O_EDGE: u32 = 20; // + index into Edge::ALL
-const ONBOARD_STEPS: u8 = 4;
+const ONBOARD_STEPS: u8 = 5;
 /// Tour step 3: how to use it.
 const TOUR_TIPS: [(&str, &str, &str); 3] = [
     (glyph::PLAY, "Hover to open", "Click works too. Move the mouse away and it closes."),
     ("\u{E962}", "Scroll to switch", "Roll the mouse wheel on the open notch to change panels."),
     (glyph::BACK, "Right-drag: move it", "Drop it on any edge of any screen."),
 ];
+/// Tour step 4: panels worth knowing about.
+const TOUR_PANELS: [(&str, &str, &str); 4] = [
+    ("\u{E99A}", "AI agents", "Hermes, Claude Code, Codex: working, needs you, done."),
+    ("\u{E9D9}", "System monitor", "CPU, memory and network, also on the closed notch."),
+    ("\u{E90F}", "Tools", "Color picker, calculator, QR codes and converters."),
+    (glyph::PASTE, "Clipboard & Shelf", "Search, snippets, click to paste. Screenshots to the Shelf."),
+];
+
 /// Tour step 4: what's in Settings, at a glance.
 const TOUR_SETTINGS: [(&str, &str, &str); 8] = [
     ("\u{E771}", "Style & edge", "4 looks, any screen edge"),
@@ -101,6 +111,10 @@ const TOAST_BODY: u32 = 999;
 
 const TIMER_TICK: usize = 1;
 const TIMER_FRAME: usize = 2;
+/// Self-test: seconds since the last input, or -1 for the real value (build
+/// servers have had no mouse movement for ages, so the mascot would doze).
+pub static IDLE_OVERRIDE: std::sync::atomic::AtomicI64 = std::sync::atomic::AtomicI64::new(-1);
+
 /// Self-test: behave as if no full-screen app were running (the tests run
 /// on the user's PC, maybe while a game is open).
 pub static FORCE_VISIBLE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
@@ -292,7 +306,9 @@ impl App {
     pub fn create(visible: bool) -> Result<()> {
         unsafe {
             let hinst = GetModuleHandleW(None)?;
-            let class = w!("WindyLandNotch");
+            // Self-test and docs renders use their own class, so agent hooks
+            // (and the uninstaller) only ever find the real notch.
+            let class = if crate::modules::agents::ISOLATED.load(std::sync::atomic::Ordering::Relaxed) { w!("WindyLandNotchTest") } else { w!("WindyLandNotch") };
             let wc = WNDCLASSEXW {
                 cbSize: std::mem::size_of::<WNDCLASSEXW>() as u32,
                 lpfnWndProc: Some(wndproc),
@@ -458,6 +474,7 @@ impl App {
         let mut toasts = Vec::new();
         let mut open_tab = None;
         let mut keyboard = None;
+        let mut close = false;
         let r = {
             let mut ctx = Ctx {
                 now: Now::get(),
@@ -468,6 +485,7 @@ impl App {
                 toasts: &mut toasts,
                 open_tab: &mut open_tab,
                 keyboard: &mut keyboard,
+                close: &mut close,
             };
             f(self.modules[i].as_mut(), &mut ctx)
         };
@@ -486,6 +504,12 @@ impl App {
             Some(true) => self.grab_keyboard(i),
             Some(false) => self.release_keyboard(),
             None => {}
+        }
+        if close {
+            self.release_keyboard();
+            self.expanded = false;
+            self.settings_open = false;
+            self.leave_at = None;
         }
         self.request_frame();
         r
@@ -601,6 +625,10 @@ impl App {
     }
 
     fn system_idle_secs() -> f64 {
+        let o = IDLE_OVERRIDE.load(std::sync::atomic::Ordering::Relaxed);
+        if o >= 0 {
+            return o as f64;
+        }
         unsafe {
             let mut lii = LASTINPUTINFO { cbSize: std::mem::size_of::<LASTINPUTINFO>() as u32, dwTime: 0 };
             if GetLastInputInfo(&mut lii).as_bool() {
@@ -803,6 +831,15 @@ impl App {
         let dt = (t - self.last_frame).clamp(0.0, 0.1) as f32;
         self.last_frame = t;
 
+        if self.mode() == Mode::Collapsed && !self.settings_open {
+            if let Some(i) = self.remembered_tab() {
+                if i != self.tab {
+                    self.tab = i;
+                    self.shown = (i, false);
+                }
+            }
+        }
+
         // Open once the mouse has rested on the collapsed notch long enough.
         if self.hover && self.can_hover_open() && t - self.hover_since >= self.settings.style.hover_delay() {
             self.open_from_hover();
@@ -987,13 +1024,31 @@ impl App {
     /// Tooltip for the hit under the mouse after it has rested there for a
     /// moment. Drawn outside the notch (on the side away from the screen
     /// edge) and kept inside the canvas.
+    /// The tooltip of a hit: its own, or the owner's text for that id.
+    fn tip_for(&self, h: &crate::ui::Hit) -> &'static str {
+        if !h.tip.is_empty() {
+            return h.tip;
+        }
+        match h.module {
+            SETTINGS => settings_tip(h.id),
+            ONBOARD => onboard_tip(h.id),
+            m if m < self.modules.len() => self.modules[m].tip(h.id),
+            _ => "",
+        }
+    }
+
     fn draw_tooltip(&mut self, t: f64) {
         const DELAY: f64 = 0.6;
         let hit = if self.press.is_none() && !self.dragging { self.hit_at(self.mouse.0, self.mouse.1) } else { None };
-        let Some(h) = hit.filter(|h| !h.tip.is_empty()) else {
+        let Some(mut h) = hit else {
             self.tip = None;
             return;
         };
+        h.tip = self.tip_for(&h);
+        if h.tip.is_empty() {
+            self.tip = None;
+            return;
+        }
         match self.tip {
             Some((m, id, _, _)) if m == h.module && id == h.id => {}
             _ => self.tip = Some((h.module, h.id, t, false)),
@@ -1040,7 +1095,7 @@ impl App {
         let mut bar = self.content_rect(notch, 6.0, PAD, PAD).cut_top(TAB_H, 8.0);
         let now = Now::get();
         let mouse = self.mouse;
-        let slot = TAB_H + 4.0;
+        let slot = TAB_H + TAB_GAP;
         let tabs = self.tab_list();
         self.tab_bar = bar;
         // The highlight pill glides to the selected tab (or the gear).
@@ -1078,7 +1133,7 @@ impl App {
             let pill_c = col::TEXT.with_a(0.16).lerp(accent.with_a(0.42), (1.0 - gp) * 0.8);
             ui.fill_rr(pill, TAB_H / 2.0, pill_c);
             for &i in &tabs {
-                let tr = bar.cut_left(TAB_H, 4.0);
+                let tr = bar.cut_left(TAB_H, TAB_GAP);
                 let m = &self.modules[i];
                 let sel = i == self.tab && !self.settings_open;
                 let fg = if sel && gp < 1.0 {
@@ -1094,7 +1149,7 @@ impl App {
             }
             // Settings gear, set slightly apart from the tabs.
             bar.cut_left(4.0, 0.0);
-            let gr = bar.cut_left(TAB_H, 4.0);
+            let gr = bar.cut_left(TAB_H, TAB_GAP);
             let fg = if self.settings_open { col::TEXT } else { col::DIM };
             ui.icon_btn(gr, glyph::SETTINGS, GEAR, 14.0, fg, None, if self.settings_open { "Close settings" } else { "Settings" });
             // Title of the current tab + date/time on the right. With many
@@ -1109,7 +1164,7 @@ impl App {
                 let d = bar.cut_right(10.0, 2.0);
                 ui.circle(d.cx(), d.cy(), 3.5, *c);
             }
-            let title = if self.settings_open { "Settings" } else { self.modules[self.tab].title() };
+            let title = if self.settings_open { "Settings" } else { panel_name(self.modules[self.tab].title()) };
             let date = now.short_date();
             let title_w = ui.measure(title, 13.0, Weight::Semi) + 10.0;
             let date_w = ui.measure(&date, 12.0, Weight::Regular) + 8.0;
@@ -1509,6 +1564,7 @@ impl App {
             0 => ("First, how should the notch look when it's closed?", "Pick one. You can change it anytime in Settings."),
             1 => ("Where should it sit?", "Or right-drag the notch to any edge, on any screen."),
             2 => ("How to use it", "Three quick tips."),
+            3 => ("A few panels worth knowing", "Hide any of them in Settings > Panels."),
             _ => (TOUR_Q_SETTINGS, "That's it. Enjoy!"),
         };
         ui.text(question, r.cut_top(20.0, 2.0), 12.5, col::DIM, Weight::Regular, Align::Left);
@@ -1582,8 +1638,9 @@ impl App {
                     ui.chip(cell, e.label(), O_EDGE + i as u32, st.edge == e, accent);
                 }
             }
-            2 => {
-                for (cell, (g, title, sub)) in body.columns(3, 10.0).into_iter().zip(TOUR_TIPS) {
+            2 | 3 => {
+                let cards: &[(&str, &str, &str)] = if step == 2 { &TOUR_TIPS } else { &TOUR_PANELS };
+                for (cell, &(g, title, sub)) in body.columns(cards.len(), 10.0).into_iter().zip(cards) {
                     ui.fill_rr(cell, 12.0, col::BTN);
                     let mut c = cell.inset(10.0);
                     let ic = c.cut_top(26.0, 6.0);
@@ -1912,6 +1969,7 @@ impl App {
                     }
                 } else {
                     self.tab = hit.id as usize;
+                    self.remember_tab();
                     self.settings_open = false;
                     if let Some(k) = self.keyboard {
                         self.modules[k].blur();
@@ -1983,6 +2041,22 @@ impl App {
         self.step_tab(step);
     }
 
+    /// Save the panel you picked, so the notch opens on it next time (also
+    /// after a restart).
+    fn remember_tab(&mut self) {
+        let title = self.modules[self.tab].title();
+        if self.settings.last_tab != title {
+            self.settings.last_tab = title.to_string();
+            self.settings.save();
+        }
+    }
+
+    /// The remembered panel, if it still has a visible tab.
+    fn remembered_tab(&self) -> Option<usize> {
+        let tabs = self.tab_list();
+        tabs.iter().copied().find(|&i| self.modules[i].title() == self.settings.last_tab)
+    }
+
     /// Move to the next (+1) or previous (-1) visible tab; stops at the ends.
     fn step_tab(&mut self, step: i32) {
         let tabs = self.tab_list();
@@ -1992,6 +2066,7 @@ impl App {
             let i = tabs[next as usize];
             self.modules[self.tab].blur();
             self.tab = i;
+            self.remember_tab();
             self.leave_at = None;
         }
     }
@@ -2145,6 +2220,7 @@ impl App {
                 self.tick();
                 Some(LRESULT(0))
             }
+
             WM_MOUSEMOVE => {
                 if self.rdrag.is_some() {
                     self.on_right_drag();
@@ -2499,6 +2575,95 @@ pub fn selftest() -> String {
                 a.call(i, |m, c| m.action((1 << 24) | older, (0.0, 0.0), c)); // copy the text again
                 let back = cb::current(hwnd);
                 out += &format!("{:<4} clicking an entry puts it back on the clipboard\n", if back == Some(Content::Text(tag.clone())) { "OK" } else { "FAIL" });
+                // Clicking the row pastes into the app you were using; the copy
+                // icon (shown on hover) only copies.
+                {
+                    use std::sync::atomic::Ordering::Relaxed;
+                    cb::PASTE_DRY_RUN.store(true, Relaxed);
+                    a.settings_open = false;
+                    a.expanded = true;
+                    a.tab = i;
+                    let tgt = a.target();
+                    a.cur = tgt;
+                    a.render(tgt, 0.0);
+                    // The second entry (the first one shows "Copied" right now).
+                    let row = a.hits.iter().filter(|h| h.module == i && h.id >> 24 == 4).nth(1).copied();
+                    let mut copy_icon = None;
+                    if let Some(h) = row {
+                        a.on_mouse_move(h.rect.x + 40.0, h.rect.cy());
+                        a.render(tgt, 0.0);
+                        copy_icon = a.hits.iter().find(|x| x.module == i && x.id >> 24 == 1 && (x.rect.cy() - h.rect.cy()).abs() < 2.0).copied();
+                    }
+                    // A plain desktop-style window to paste into (not WindyLand).
+                    let shell = unsafe { GetShellWindow() };
+                    cb::TEST_TARGET.store(shell.0 as isize, Relaxed);
+                    let entry = row.map_or(0, |h| h.id & 0xFF_FFFF);
+                    cb::set_clipboard(hwnd, &Content::Text("other".into()));
+                    a.call(i, |m, c| m.action((4 << 24) | entry, (0.0, 0.0), c));
+                    let st = a.modules[i].debug_state();
+                    let pasted = st.contains("paste=Some(Sent)") && cb::current(hwnd).map_or(false, |c| c != Content::Text("other".into()));
+                    cb::set_clipboard(hwnd, &Content::Text("other".into()));
+                    a.call(i, |m, c| m.action((1 << 24) | entry, (0.0, 0.0), c));
+                    let st2 = a.modules[i].debug_state();
+                    let copied = st2.contains("paste=None") && cb::current(hwnd).map_or(false, |c| c != Content::Text("other".into()));
+                    // Never into WindyLand itself or the taskbar.
+                    cb::TEST_TARGET.store(hwnd.0 as isize, Relaxed);
+                    a.call(i, |m, c| m.action((4 << 24) | entry, (0.0, 0.0), c));
+                    let own = a.modules[i].debug_state().contains("paste=Some(NoTarget)");
+                    let tray = unsafe { FindWindowW(w!("Shell_TrayWnd"), None) }.unwrap_or_default();
+                    let no_tray = tray.0.is_null() || !cb::paste_target_ok(tray, hwnd);
+                    out += &format!(
+                        "{:<4} clicking an entry pastes it, the copy icon only copies, never into WindyLand or the taskbar {:?}\n",
+                        if row.is_some() && copy_icon.is_some() && pasted && copied && own && no_tray { "OK" } else { "FAIL" },
+                        (row.is_some(), copy_icon.is_some(), pasted, copied, own, no_tray)
+                    );
+                    out += &snap(a, "clipboard hover with copy icon");
+                    // Real Ctrl+V into a text box (opt-in: it takes focus).
+                    if std::env::var("WINDYLAND_TEST_PASTE").is_ok() {
+                        cb::PASTE_DRY_RUN.store(false, Relaxed);
+                        unsafe {
+                            let hinst = GetModuleHandleW(None).unwrap_or_default();
+                            let top = CreateWindowExW(WINDOW_EX_STYLE(0), w!("STATIC"), w!("WindyLand paste test"), WS_OVERLAPPEDWINDOW | WS_VISIBLE, 100, 100, 400, 120, None, None, hinst, None).unwrap_or_default();
+                            // An Edit can't be a top-level parent for focus tests; host it.
+                            let edit = CreateWindowExW(WINDOW_EX_STYLE(0), w!("EDIT"), w!(""), WS_CHILD | WS_VISIBLE | WS_BORDER, 10, 10, 360, 30, top, None, hinst, None).unwrap_or_default();
+                            // Windows only lets the app that got the last input take
+                            // the foreground: send it an empty key event first.
+                            let nothing = INPUT { r#type: INPUT_KEYBOARD, Anonymous: INPUT_0 { ki: KEYBDINPUT { wVk: VIRTUAL_KEY(0), wScan: 0, dwFlags: KEYEVENTF_KEYUP, time: 0, dwExtraInfo: 0 } } };
+                            SendInput(&[nothing], std::mem::size_of::<INPUT>() as i32);
+                            let _ = SetForegroundWindow(top);
+                            let _ = SetFocus(edit);
+                            let front = GetForegroundWindow() == top;
+                            let want = format!("WindyLand paste {}", crate::time::unix_now() as u64);
+                            cb::set_clipboard(hwnd, &Content::Text(want.clone()));
+                            wait(a);
+                            cb::TEST_TARGET.store(top.0 as isize, Relaxed);
+                            let st = a.modules[i].debug_state();
+                            let id: u32 = field(&st, "top_id").parse().unwrap_or(0);
+                            let _ = SetFocus(edit);
+                            a.call(i, |m, c| m.action((4 << 24) | id, (0.0, 0.0), c));
+                            let mut got = String::new();
+                            for _ in 0..40 {
+                                let mut msg = MSG::default();
+                                while PeekMessageW(&mut msg, None, 0, 0, PM_REMOVE).as_bool() {
+                                    let _ = TranslateMessage(&msg);
+                                    DispatchMessageW(&msg);
+                                }
+                                let mut b = [0u16; 128];
+                                let n = GetWindowTextW(edit, &mut b);
+                                got = String::from_utf16_lossy(&b[..n as usize]);
+                                if got == want {
+                                    break;
+                                }
+                                std::thread::sleep(std::time::Duration::from_millis(25));
+                            }
+                            let _ = DestroyWindow(top);
+                            out += &format!("{:<4} clicking an entry really pastes into a text box ({got:?}, test window in front: {front})\n", if got == want { "OK" } else { "FAIL" });
+                        }
+                    }
+                    cb::PASTE_DRY_RUN.store(false, Relaxed);
+                    cb::TEST_TARGET.store(0, Relaxed);
+                    a.on_mouse_leave();
+                }
                 if let Some(s) = saved {
                     cb::set_clipboard(hwnd, &s);
                 }
@@ -2692,6 +2857,56 @@ pub fn selftest() -> String {
                 }
             }
             out += &format!("{:<4} every tab's header fits with its title {:?}\n", if no_title.is_empty() { "OK" } else { "FAIL" }, no_title);
+            // Every clickable thing explains itself on hover.
+            let mut missing: Vec<String> = Vec::new();
+            let mut audit = |a: &mut App, view: &str| {
+                let tgt = a.target();
+                a.cur = tgt;
+                a.render(tgt, 0.0);
+                let hits: Vec<crate::ui::Hit> = a.hits.clone();
+                for h in hits {
+                    if h.id == u32::MAX || h.module == APP_HIT {
+                        continue;
+                    }
+                    if a.tip_for(&h).is_empty() {
+                        let s = format!("{view}:{}", h.id);
+                        if !missing.contains(&s) {
+                            missing.push(s);
+                        }
+                    }
+                }
+            };
+            for i in 0..a.modules.len() {
+                if !a.modules[i].has_tab() {
+                    continue;
+                }
+                a.tab = i;
+                a.settings_open = false;
+                let title = a.modules[i].title();
+                audit(a, title);
+                // Other views of the same panel.
+                let views: &[u32] = match title {
+                    "Tools" => &[2, 3, 4, 77, 73, 1],
+                    "Water Reminder" => &[2, 3],
+                    "Prayer Times" => &[1, 3, 4, 5, 2],
+                    "AI Agents" => &[990, 3],
+                    "Clipboard" => &[991],
+                    _ => &[],
+                };
+                for &v in views {
+                    a.call(i, |m, c| m.action(v, (0.0, 0.0), c));
+                    a.release_keyboard();
+                    audit(a, title);
+                }
+            }
+            a.settings_open = true;
+            for p in 0..3u8 {
+                a.settings_page = p;
+                audit(a, &format!("settings{p}"));
+            }
+            a.settings_page = 0;
+            a.settings_open = false;
+            out += &format!("{:<4} every button, switch, chip and row has a tooltip {:?}\n", if missing.is_empty() { "OK" } else { "FAIL" }, missing);
             out += &format!("{:<4} every tab icon has a tooltip {:?}\n", if untipped.is_empty() { "OK" } else { "FAIL" }, untipped);
             a.expanded = false;
         }
@@ -2910,7 +3125,10 @@ pub fn selftest() -> String {
             let ok = click(a, O_NEXT) && a.onboarding == Some(1) && click(a, O_EDGE + 1) && a.settings.edge == Edge::Bottom && a.mode() == Mode::Expanded;
             out += &format!("{:<4} step 2 moves the notch and the tour stays open\n", if ok { "OK" } else { "FAIL" });
             let ok = click(a, O_NEXT) && a.onboarding == Some(2) && click(a, O_NEXT) && a.onboarding == Some(3);
-            let glance = a.hits.iter().filter(|h| h.module == ONBOARD).count() > 0 && a.onboarding == Some(3);
+            let panels = a.hits.iter().filter(|h| h.module == ONBOARD).count() > 0;
+            out += &format!("{:<4} tour step 4 introduces AI agents, System monitor, Tools, Clipboard & Shelf\n", if ok && panels { "OK" } else { "FAIL" });
+            let ok = ok && click(a, O_NEXT) && a.onboarding == Some(4);
+            let glance = a.hits.iter().filter(|h| h.module == ONBOARD).count() > 0 && a.onboarding == Some(4);
             out += &format!("{:<4} tour shows the mouse-wheel tip and Settings at a glance ({} items)\n", if glance { "OK" } else { "FAIL" }, TOUR_SETTINGS.len());
             let ok = ok && click(a, O_NEXT) && a.onboarding.is_none();
             let saved = crate::store::read("settings.txt").contains("onboarded=1");
@@ -2932,7 +3150,13 @@ pub fn selftest() -> String {
                     tight.push(s);
                 }
             }
-            let card_w = (ONBOARD_SIZE.0 - 8.0 - 20.0) / 3.0 - 20.0;
+            let card_w = (ONBOARD_SIZE.0 - 8.0 - 10.0 * (TOUR_TIPS.len() as f32 - 1.0)) / TOUR_TIPS.len() as f32 - 20.0;
+            let panel_w = (ONBOARD_SIZE.0 - 8.0 - 10.0 * (TOUR_PANELS.len() as f32 - 1.0)) / TOUR_PANELS.len() as f32 - 20.0;
+            for (_, s, sub) in TOUR_PANELS {
+                if a.gfx.measure(s, 12.5, Weight::Semi) > panel_w || a.gfx.measure(sub, 11.0, Weight::Regular) > panel_w * 3.6 {
+                    tight.push(s);
+                }
+            }
             for (_, s, sub) in TOUR_TIPS {
                 if a.gfx.measure(s, 12.5, Weight::Semi) > card_w {
                     tight.push(s);
@@ -3358,6 +3582,7 @@ pub fn selftest() -> String {
         // Mascot: "Always" and left / centre / right, with and without a live activity.
         {
             let before = (a.settings.mascot_always, a.settings.mascot_pos, a.settings.personality, a.settings.style, a.settings.edge);
+            IDLE_OVERRIDE.store(0, std::sync::atomic::Ordering::Relaxed);
             a.settings.personality = true;
             a.settings.style = NotchStyle::Full;
             a.settings.edge = Edge::Top;
@@ -3423,8 +3648,600 @@ pub fn selftest() -> String {
                 (clock_first, always, back, where_ok, live_ok)
             );
             (a.settings.mascot_always, a.settings.mascot_pos, a.settings.personality, a.settings.style, a.settings.edge) = before;
+            IDLE_OVERRIDE.store(-1, std::sync::atomic::Ordering::Relaxed);
             a.settings.save();
             a.update_mood();
+        }
+        // The notch remembers the panel you picked (also after a restart),
+        // and returns to it after a reminder opened another one.
+        {
+            a.toast = None;
+            a.queue.clear();
+            a.settings_open = false;
+            a.release_keyboard();
+            let tabs = a.tab_list();
+            let (water, todo) = (find(a, "Water Reminder").unwrap_or(tabs[1]), find(a, "TodoList").unwrap_or(tabs[0]));
+            a.expanded = true;
+            a.tab = tabs[0];
+            let tgt = a.target();
+            a.cur = tgt;
+            a.render(tgt, 0.0);
+            if let Some(h) = a.hits.iter().find(|h| h.module == APP_HIT && h.id == water as u32).copied() {
+                a.on_down(h.rect.cx(), h.rect.cy());
+                a.on_up(h.rect.cx(), h.rect.cy());
+            }
+            let saved = crate::store::read("settings.txt").lines().any(|l| l.trim() == "last_tab=Water Reminder");
+            a.expanded = false;
+            a.frame();
+            let kept = a.tab == water;
+            // A reminder opens To-do for a moment...
+            a.call(todo, |_, c| c.open_my_tab());
+            let jumped = a.tab == todo && a.expanded;
+            a.expanded = false;
+            a.leave_at = None;
+            a.frame();
+            let back = a.tab == water;
+            // ...and a restart opens Water again.
+            let reloaded = crate::store::Settings::load().last_tab == "Water Reminder";
+            out += &format!(
+                "{:<4} the notch remembers the last panel you picked, across restarts and after a reminder {:?}\n",
+                if saved && kept && jumped && back && reloaded { "OK" } else { "FAIL" },
+                (saved, kept, jumped, back, reloaded)
+            );
+        }
+        // AI agents: hook events -> states, toasts and the live wing; the
+        // hook process itself; connecting the agents in a scratch home.
+        if let Some(ai) = find(a, "AI Agents") {
+            use crate::modules::agents::{self as ag, Link};
+            use serde_json::json;
+            let toasted = |a: &App, f: &dyn Fn(&crate::modules::Toast) -> bool| a.toast.as_ref().map_or(false, |t| f(&t.0)) || a.queue.iter().any(|t| f(t));
+            let clear = |a: &mut App| {
+                a.toast = None;
+                a.queue.clear();
+            };
+            let feed = |a: &mut App, j: serde_json::Value| {
+                ag::push_event(j.to_string());
+                a.call(ai, |m, c| m.tick(c));
+            };
+            clear(a);
+            out += &snap(a, "agents: nothing connected");
+            feed(a, json!({"agent": "claude", "event": "SessionStart", "session": "t1", "cwd": "C:\\Projects\\shop"}));
+            let ready = a.modules[ai].debug_state().contains("claude:shop:Ready") && a.modules[ai].live().is_none();
+            feed(a, json!({"agent": "claude", "event": "UserPromptSubmit", "session": "t1", "cwd": "C:\\Projects\\shop"}));
+            let working = a.modules[ai].debug_state().contains("claude:shop:Working") && a.modules[ai].live() == Some(45);
+            feed(a, json!({"agent": "claude", "event": "Notification", "session": "t1", "message": "Claude needs your permission to use Bash"}));
+            let asked = a.modules[ai].debug_state().contains("NeedsYou") && a.modules[ai].live() == Some(75) && toasted(a, &|t| t.key == "agent" && t.title == "Claude Code needs you" && t.sub.contains("Bash"));
+            feed(a, json!({"agent": "claude", "event": "PostToolUse", "session": "t1", "tool": "Bash"}));
+            let back = a.modules[ai].debug_state().contains("claude:shop:Working");
+            clear(a);
+            feed(a, json!({"agent": "claude", "event": "Stop", "session": "t1"}));
+            let done = a.modules[ai].debug_state().contains("claude:shop:Done") && a.modules[ai].live() == Some(50) && toasted(a, &|t| t.title == "Claude Code finished");
+            clear(a);
+            feed(a, json!({"agent": "claude", "event": "Notification", "session": "t1", "message": "Claude is waiting for your input"}));
+            let quiet = a.toast.is_none() && a.queue.is_empty() && a.modules[ai].debug_state().contains("claude:shop:Done");
+            feed(a, json!({"agent": "codex", "event": "Stop", "session": "c1", "cwd": "D:/work/api"}));
+            let codex = a.modules[ai].debug_state().contains("codex:api:Done") && toasted(a, &|t| t.title == "Codex finished");
+            clear(a);
+            feed(a, json!({"agent": "claude", "event": "SessionEnd", "session": "t1"}));
+            let ended = !a.modules[ai].debug_state().contains("claude:shop");
+            out += &format!(
+                "{:<4} agents: ready, working, needs you (toast), back to work, done (toast), idle nudge ignored, Codex done, session end {:?}\n",
+                if ready && working && asked && back && done && quiet && codex && ended { "OK" } else { "FAIL" },
+                (ready, working, asked, back, done, quiet, codex, ended)
+            );
+            // Hermes: stream start = working, a question/approval = needs you,
+            // turn end = done, Esc = stopped, session closed = gone.
+            feed(a, json!({"agent": "hermes", "event": "on_stream_start", "session": "h1", "cwd": "C:\\Users\\Shabab", "surface": "desktop", "model": "anthropic/claude-opus"}));
+            let h_work = a.modules[ai].debug_state().contains("hermes:desktop:Working") && a.modules[ai].live() == Some(45);
+            feed(a, json!({"agent": "hermes", "event": "on_human_input_request", "session": "h1", "kind": "approval"}));
+            let h_ask = a.modules[ai].debug_state().contains("hermes:desktop:NeedsYou") && toasted(a, &|t| t.title == "Hermes needs you" && t.sub.contains("OK"));
+            feed(a, json!({"agent": "hermes", "event": "on_human_input_resolved", "session": "h1"}));
+            let h_back = a.modules[ai].debug_state().contains("hermes:desktop:Working");
+            clear(a);
+            feed(a, json!({"agent": "hermes", "event": "on_session_end", "session": "h1", "interrupted": true}));
+            let h_stop = a.modules[ai].debug_state().contains("hermes:desktop:Ready") && a.toast.is_none() && a.queue.is_empty();
+            feed(a, json!({"agent": "hermes", "event": "on_stream_start", "session": "h1"}));
+            feed(a, json!({"agent": "hermes", "event": "on_session_end", "session": "h1"}));
+            let h_done = a.modules[ai].debug_state().contains("hermes:desktop:Done") && toasted(a, &|t| t.title == "Hermes finished");
+            feed(a, json!({"agent": "hermes", "event": "on_session_finalize", "session": "h1"}));
+            let h_gone = !a.modules[ai].debug_state().contains("hermes:desktop");
+            clear(a);
+            out += &format!(
+                "{:<4} Hermes: working, needs you (toast), back to work, Esc = stopped (no toast), done (toast), closed {:?}\n",
+                if h_work && h_ask && h_back && h_stop && h_done && h_gone { "OK" } else { "FAIL" },
+                (h_work, h_ask, h_back, h_stop, h_done, h_gone)
+            );
+            let hp = json!({"hook_event_name": "on_human_input_request", "tool_name": null, "tool_input": null, "session_id": "s9", "cwd": "C:/Users/x", "profile": "default", "extra": {"kind": "approval", "prompt": "rm -rf [REDACTED]", "conversation_history": ["SECRET"], "user_message": "SECRET"}});
+            let hs = ag::slim("hermes", &hp).to_string();
+            out += &format!("{:<4} Hermes hook payload slimmed ({hs})\n", if !hs.contains("SECRET") && hs.contains("approval") && hs.contains("s9") { "OK" } else { "FAIL" });
+            // Hermes hooks merge: keeps the user's own hooks and other sections.
+            let cur = json!({"pre_tool_call": [{"command": "mine.sh", "matcher": "terminal"}], "outbound": [{"url": "https://x"}]});
+            let cmd = ag::hook_command("hermes");
+            let on = ag::merge_hermes_hooks(&cur, &cmd, true);
+            let twice = ag::merge_hermes_hooks(&on, &cmd, true);
+            let off = ag::merge_hermes_hooks(&on, &cmd, false);
+            let ok = on == twice && off == cur && ag::HERMES_EVENTS.iter().all(|e| on[*e].as_array().map_or(false, |l| l.len() == 1)) && on["pre_tool_call"] == cur["pre_tool_call"];
+            out += &format!("{:<4} Hermes hooks: added once per event, the user's hooks and outbound kept, removal restores\n", if ok { "OK" } else { "FAIL" });
+            if std::env::var("WINDYLAND_TEST_HERMES").is_ok() {
+                // The real hermes CLI against a scratch HERMES_HOME (never the user's).
+                let hh = crate::store::dir().join("hermes-home");
+                let _ = std::fs::remove_dir_all(&hh);
+                let _ = std::fs::create_dir_all(&hh);
+                let _ = std::fs::write(hh.join("config.yaml"), "hooks:\n  pre_tool_call:\n  - command: mine.sh\n    matcher: terminal\n");
+                std::env::set_var("WINDYLAND_HERMES_HOME", &hh);
+                let t0 = std::time::Instant::now();
+                let c1 = ag::hermes_connect(true);
+                let cfg = std::fs::read_to_string(hh.join("config.yaml")).unwrap_or_default();
+                let allow = std::fs::read_to_string(hh.join("shell-hooks-allowlist.json")).unwrap_or_default();
+                let linked = ag::hermes_link() == Link::On;
+                let c2 = ag::hermes_connect(false);
+                let cfg2 = std::fs::read_to_string(hh.join("config.yaml")).unwrap_or_default();
+                let allow2 = std::fs::read_to_string(hh.join("shell-hooks-allowlist.json")).unwrap_or_default();
+                let ok = c1.is_ok() && c2.is_ok() && linked && cfg.contains("on_stream_start") && cfg.contains("mine.sh") && allow.matches("--agent-event hermes").count() == 6 && !cfg2.contains("agent-event") && cfg2.contains("mine.sh") && !allow2.contains("agent-event") && ag::hermes_link() == Link::Off;
+                out += &format!("{:<4} real hermes CLI: connect writes 6 hooks + consent, keeps the user's hook, disconnect removes them ({:.1} s) {:?}\n", if ok { "OK" } else { "FAIL" }, t0.elapsed().as_secs_f32(), (c1, c2, linked));
+                std::env::remove_var("WINDYLAND_HERMES_HOME");
+            }
+            // The hook keeps only status fields: no prompt, no file contents.
+            let big = json!({"hook_event_name": "PostToolUse", "session_id": "s", "cwd": "C:/x/y", "tool_name": "Read", "prompt": "SECRET-PROMPT", "tool_input": {"file_path": "C:/x/.env"}, "tool_response": {"content": "SECRET-FILE"}});
+            let slim = ag::slim("claude", &big).to_string();
+            out += &format!("{:<4} the hook passes on only event, session, folder, tool and notice ({slim})\n", if !slim.contains("SECRET") && !slim.contains(".env") && slim.contains("Read") { "OK" } else { "FAIL" });
+            // The real hook process, as Claude Code and Codex run it.
+            let exe = std::env::current_exe().unwrap_or_default();
+            let mut timings = Vec::new();
+            for (agent, payload) in [
+                ("claude", json!({"hook_event_name": "UserPromptSubmit", "session_id": "rt1", "cwd": "C:/Projects/roundtrip", "prompt": "SECRET-PROMPT"}).to_string()),
+                ("codex", json!({"type": "agent-turn-complete", "thread-id": "rt2", "cwd": "C:/Projects/codexrt", "last-assistant-message": "SECRET"}).to_string()),
+            ] {
+                use std::io::Write;
+                let t0 = std::time::Instant::now();
+                let mut cmd = std::process::Command::new(&exe);
+                cmd.args(["--agent-event", agent]).env("WINDYLAND_AGENT_HWND", (a.hwnd.0 as isize).to_string()).stdin(std::process::Stdio::piped());
+                if agent == "codex" {
+                    cmd.arg(&payload);
+                }
+                if let Ok(mut child) = cmd.spawn() {
+                    if let Some(mut si) = child.stdin.take() {
+                        if agent == "claude" {
+                            let _ = si.write_all(payload.as_bytes());
+                        }
+                    }
+                    for _ in 0..500 {
+                        unsafe {
+                            let mut msg = MSG::default();
+                            while PeekMessageW(&mut msg, None, 0, 0, PM_REMOVE).as_bool() {
+                                let _ = TranslateMessage(&msg);
+                                DispatchMessageW(&msg);
+                            }
+                        }
+                        if child.try_wait().ok().flatten().is_some() {
+                            break;
+                        }
+                        std::thread::sleep(std::time::Duration::from_millis(5));
+                    }
+                }
+                timings.push(t0.elapsed().as_millis());
+            }
+            a.call(ai, |m, c| m.tick(c));
+            let st = a.modules[ai].debug_state();
+            let rt = st.contains("claude:roundtrip:Working") && st.contains("codex:codexrt:Done") && !st.contains("SECRET");
+            out += &format!("{:<4} hook processes reach the notch (Claude via stdin, Codex via argument) in {:?} ms\n", if rt && timings.iter().all(|t| *t < 3000) { "OK" } else { "FAIL" }, timings);
+            clear(a);
+            // Connecting, in a scratch home (never the real ~/.claude).
+            let home = crate::store::dir().join("agent-home");
+            let _ = std::fs::remove_dir_all(&home);
+            let _ = std::fs::create_dir_all(&home);
+            std::env::set_var("WINDYLAND_AGENT_HOME", &home);
+            let missing = ag::claude_link() == Link::Missing && ag::claude_connect(true).is_err() && ag::codex_link() == Link::Missing;
+            let _ = std::fs::create_dir_all(home.join(".claude"));
+            let original = "{\n  \"model\": \"opus\",\n  \"hooks\": {\n    \"Stop\": [\n      {\n        \"hooks\": [\n          {\n            \"type\": \"command\",\n            \"command\": \"echo mine\"\n          }\n        ]\n      }\n    ]\n  },\n  \"zzz\": 1\n}\n";
+            let _ = std::fs::write(home.join(".claude/settings.json"), original);
+            let c1 = ag::claude_connect(true).is_ok() && ag::claude_connect(true).is_ok() && ag::claude_link() == Link::On;
+            let text = std::fs::read_to_string(home.join(".claude/settings.json")).unwrap_or_default();
+            let v: serde_json::Value = serde_json::from_str(&text).unwrap_or_default();
+            let ours = |ev: &str| v["hooks"][ev].as_array().map_or(0, |l| l.iter().filter(|e| e.to_string().contains("--agent-event")).count());
+            let all_once = ag::CLAUDE_EVENTS.iter().all(|e| ours(e) == 1);
+            let kept = text.contains("echo mine") && text.find("\"model\"") < text.find("\"hooks\"") && text.find("\"hooks\"") < text.find("\"zzz\"");
+            let c2 = ag::claude_connect(false).is_ok() && ag::claude_link() == Link::Off;
+            let restored = std::fs::read_to_string(home.join(".claude/settings.json")).unwrap_or_default() == original;
+            let backup = home.join(".claude/settings.json.windyland-backup").exists();
+            out += &format!(
+                "{:<4} Claude Code connect adds 6 hooks once, keeps the user's settings and order, disconnect restores the file exactly {:?}\n",
+                if missing && c1 && all_once && kept && c2 && restored && backup { "OK" } else { "FAIL" },
+                (missing, c1, all_once, kept, c2, restored, backup)
+            );
+            let _ = std::fs::create_dir_all(home.join(".codex"));
+            let conf = "model = \"o3\"\n\n[tui]\nnotify = true\n";
+            let _ = std::fs::write(home.join(".codex/config.toml"), conf);
+            let x1 = ag::codex_connect(true).is_ok() && ag::codex_link() == Link::On;
+            let t = std::fs::read_to_string(home.join(".codex/config.toml")).unwrap_or_default();
+            let top = t.lines().nth(1).map_or(false, |l| l.starts_with("notify = [") && l.ends_with("\"--agent-event\", \"codex\"]"));
+            let x2 = ag::codex_connect(false).is_ok() && std::fs::read_to_string(home.join(".codex/config.toml")).unwrap_or_default() == conf;
+            let theirs = "notify = [\"my-notifier\"]\nmodel = \"o3\"\n";
+            let _ = std::fs::write(home.join(".codex/config.toml"), theirs);
+            let x3 = ag::codex_connect(true).is_err() && std::fs::read_to_string(home.join(".codex/config.toml")).unwrap_or_default() == theirs;
+            out += &format!("{:<4} Codex connect adds a top-level notify line, disconnect restores, an existing notify is left alone {:?}\n", if x1 && top && x2 && x3 { "OK" } else { "FAIL" }, (x1, top, x2, x3));
+            // Uninstall unhooks both.
+            let _ = std::fs::write(home.join(".codex/config.toml"), conf);
+            let _ = ag::claude_connect(true);
+            let _ = ag::codex_connect(true);
+            ag::disconnect_all();
+            out += &format!("{:<4} uninstall disconnects both agents\n", if ag::claude_link() == Link::Off && ag::codex_link() == Link::Off { "OK" } else { "FAIL" });
+            // Never the real Hermes during tests.
+            std::env::remove_var("WINDYLAND_HERMES_HOME");
+            out += &format!("{:<4} self-test can't reach the real Hermes or agent settings ({:?}, {:?})\n", if ag::hermes_home().is_none() && ag::hermes_link() == Link::Missing { "OK" } else { "FAIL" }, ag::hermes_home(), ag::hermes_link());
+            std::env::remove_var("WINDYLAND_AGENT_HOME");
+            let _ = std::fs::remove_dir_all(&home);
+            a.call(ai, |m, c| m.action(ag::A_DEMO, (0.0, 0.0), c));
+            a.expanded = true;
+            a.settings_open = false;
+            a.tab = ai;
+            out += &snap(a, "agents: three sessions");
+            let rows = a.hits.iter().filter(|h| h.module == ai && h.id > (1 << 24)).count();
+            out += &format!("{:<4} agents panel lists the sessions ({rows} rows)\n", if rows == 3 { "OK" } else { "FAIL" });
+            // The three switches fit their labels.
+            let mut tight = Vec::new();
+            for (name, w) in ["Hermes", "Claude Code", "Codex"].iter().zip(ag::TOGGLE_W) {
+                if a.gfx.measure(name, 12.5, Weight::Regular) + 58.0 > w {
+                    tight.push(*name);
+                }
+            }
+            let left = modules::PANEL.0 - ag::TOGGLE_W.iter().sum::<f32>() - 22.0;
+            if a.gfx.measure("No agents running", 12.0, Weight::Regular) > left {
+                tight.push("status");
+            }
+            out += &format!("{:<4} agents header switches fit {:?}\n", if tight.is_empty() { "OK" } else { "FAIL" }, tight);
+            a.call(ai, |m, c| m.action(3, (0.0, 0.0), c));
+            clear(a);
+            a.expanded = false;
+        } else {
+            out += "FAIL AI Agents panel missing\n";
+        }
+
+        // System monitor: Windows counters, formatting, the closed-notch readout.
+        if let Some(mi) = find(a, "System Monitor") {
+            use crate::modules::monitor as mo;
+            let c1 = mo::cpu_times();
+            std::thread::sleep(std::time::Duration::from_millis(300));
+            let c2 = mo::cpu_times();
+            let cpu = matches!((c1, c2), (Some((i1, t1)), Some((i2, t2))) if t2 > t1 && i2 >= i1 && i2 - i1 <= t2 - t1);
+            let (used, total) = mo::memory();
+            let mem = total > (1u64 << 30) && used > 0 && used < total;
+            let net = mo::net_bytes();
+            let (free, dt) = mo::disk();
+            let disk = dt > 0 && free <= dt;
+            out += &format!("{:<4} system counters: CPU times, memory {}, network {:?}, disk {} free of {}\n", if cpu && mem && net.is_some() && disk { "OK" } else { "FAIL" }, mo::gb(total), net, mo::gb(free), mo::gb(dt));
+            let fm = [mo::speed(0.0), mo::speed(1536.0), mo::speed(5.5 * 1048576.0), mo::gb(17_179_869_184), mo::gb(511_000_000_000)];
+            out += &format!("{:<4} speeds and sizes read well {:?}\n", if fm == ["0 B/s", "2 KB/s", "5.5 MB/s", "16.0 GB", "476 GB"] { "OK" } else { "FAIL" }, fm);
+            std::thread::sleep(std::time::Duration::from_millis(1000));
+            a.call(mi, |m, c| m.tick(c));
+            let st = a.modules[mi].debug_state();
+            let sampled = st.starts_with("cpu ") && !st.contains("samples 0");
+            let was = a.modules[mi].live();
+            a.call(mi, |m, c| m.action(1, (0.0, 0.0), c));
+            let on = a.modules[mi].live() == Some(5) && crate::store::read("settings.txt").contains("monitor_live=1");
+            a.expanded = false;
+            out += &snap(a, "monitor on the closed notch");
+            a.call(mi, |m, c| m.action(1, (0.0, 0.0), c));
+            let off = a.modules[mi].live().is_none() && crate::store::read("settings.txt").contains("monitor_live=0");
+            out += &format!("{:<4} monitor samples once a second; the closed-notch readout is off by default and toggles ({st})\n", if sampled && was.is_none() && on && off { "OK" } else { "FAIL" });
+            a.expanded = true;
+            a.settings_open = false;
+            a.tab = mi;
+            out += &snap(a, "monitor panel");
+            a.expanded = false;
+        } else {
+            out += "FAIL System Monitor panel missing\n";
+        }
+
+        // Clipboard: snippets and search (no clipboard writes).
+        if let Some(ci) = find(a, "Clipboard") {
+            use crate::modules::clipboard as cb;
+            let field = |s: &str, k: &str| -> String { s.split_whitespace().find_map(|w| w.strip_prefix(&format!("{k}="))).unwrap_or("").to_string() };
+            let head_w = 500.0 - 156.0 - 68.0 - 30.0 - 34.0;
+            let mut tight = Vec::new();
+            for (on, mode) in [(true, 0u8), (true, 1), (true, 2), (false, 0)] {
+                let s = cb::status_line(on, mode);
+                if a.gfx.measure(&s, 12.0, Weight::Regular) > head_w {
+                    tight.push(s);
+                }
+            }
+            out += &format!("{:<4} clipboard header text fits beside the buttons {:?}\n", if tight.is_empty() { "OK" } else { "FAIL" }, tight);
+            a.expanded = true;
+            a.settings_open = false;
+            a.tab = ci;
+            a.call(ci, |m, c| m.action(cb::A_SNIPPET, (0.0, 0.0), c));
+            let kb = a.keyboard == Some(ci);
+            for ch in "Road 12, Dhanmondi".chars() {
+                a.on_char(ch);
+            }
+            out += &snap(a, "clipboard: typing a snippet");
+            a.on_key(0x0D);
+            let saved = crate::store::read("clipboard.txt").contains("Road 12, Dhanmondi") && a.keyboard.is_none();
+            a.call(ci, |m, c| m.action(cb::A_DEMO, (0.0, 0.0), c));
+            a.call(ci, |m, c| m.action(cb::A_SEARCH, (0.0, 0.0), c));
+            for ch in "ENTRY 3".chars() {
+                a.on_char(ch);
+            }
+            out += &snap(a, "clipboard: searching");
+            let shown = field(&a.modules[ci].debug_state(), "shown");
+            a.on_key(0x1B);
+            let cleared = field(&a.modules[ci].debug_state(), "shown") != shown && a.keyboard == Some(ci);
+            a.on_key(0x1B);
+            let closed = a.keyboard.is_none();
+            out += &format!(
+                "{:<4} clipboard snippet saved as a pin; search filters (\"entry 3\" shows {shown}), Esc clears then closes {:?}\n",
+                if kb && saved && shown == "6" && cleared && closed { "OK" } else { "FAIL" },
+                (kb, saved, cleared, closed)
+            );
+            a.call(ci, |m, c| m.action(1, (0.0, 0.0), c));
+            a.expanded = false;
+        }
+
+        // Shelf screenshot: closes the notch, saves a PNG, adds it, reopens.
+        if let Some(si) = find(a, "Shelf") {
+            use crate::modules::{shelf, snip};
+            a.call(si, |m, c| m.action(shelf::A_TEST_NO_OVERLAY, (0.0, 0.0), c));
+            a.expanded = true;
+            a.settings_open = false;
+            a.tab = si;
+            let tgt = a.target();
+            a.cur = tgt;
+            a.render(tgt, 0.0);
+            let button = a.hits.iter().find(|h| h.module == si && h.id == shelf::A_SNIP).copied();
+            if let Some(h) = button {
+                a.on_down(h.rect.cx(), h.rect.cy());
+                a.on_up(h.rect.cx(), h.rect.cy());
+            }
+            let closed = !a.expanded;
+            let px: Vec<u8> = (0..40 * 20).flat_map(|i| [(i % 40 * 6) as u8, (i / 40 * 12) as u8, 200, 255]).collect();
+            *snip::RESULT.lock().unwrap() = Some(Some(snip::Shot { w: 40, h: 20, bgra: px }));
+            a.tick();
+            let back = a.expanded && a.tab == si;
+            let st = a.modules[si].debug_state();
+            let dir = snip::folder();
+            let file = std::fs::read_dir(&dir).ok().and_then(|d| d.filter_map(|e| e.ok()).map(|e| e.path()).find(|p| p.extension().map_or(false, |x| x == "png")));
+            let bytes = file.as_ref().and_then(|f| std::fs::read(f).ok()).unwrap_or_default();
+            let png = bytes.starts_with(&[0x89, b'P', b'N', b'G']) && unsafe { crate::modules::music::decode_square(&bytes, 20) }.is_some();
+            let dib = snip::dib32(&snip::Shot { w: 3, h: 2, bgra: vec![0; 24] }).len() == 40 + 24;
+            out += &format!(
+                "{:<4} Shelf screenshot: closes the notch, saves a real PNG, adds it to the Shelf, reopens ({}) {:?}\n",
+                if button.is_some() && closed && back && st.contains("Screenshot ") && png && dib { "OK" } else { "FAIL" },
+                st,
+                (button.is_some(), closed, back, png, dib)
+            );
+            out += &snap(a, "shelf with a screenshot");
+            if std::env::var("WINDYLAND_TEST_PICKER").is_ok() {
+                let up = snip::start(a.hwnd);
+                let dragged = snip::test_drag(10, 10, 110, 60);
+                let got = snip::RESULT.lock().unwrap().take();
+                let size = got.as_ref().and_then(|g| g.as_ref().map(|s| (s.w, s.h)));
+                out += &format!("{:<4} screenshot window opens and captures the dragged area ({:?})\n", if up && dragged && size == Some((101, 51)) && !snip::active() { "OK" } else { "FAIL" }, size);
+            }
+            if let Some(f) = &file {
+                let _ = std::fs::remove_file(f);
+            }
+            a.call(si, |m, c| m.action(1, (0.0, 0.0), c));
+            a.expanded = false;
+        }
+
+        // Self-uninstall: what it would do for this exe.
+        {
+            let plan = crate::uninstall::plan(false).join(" | ");
+            let ok = plan.contains("disconnect Hermes, Claude Code and Codex") && plan.contains("delete data folder") && (plan.contains("unins000.exe") || plan.contains("if it is empty")) && !crate::uninstall::plan(true).join(" ").contains("delete data folder");
+            out += &format!("{:<4} uninstall plan ({plan})\n", if ok { "OK" } else { "FAIL" });
+        }
+
+        // Tools tab: calculator, converter, time zones, colours, QR, picker.
+        {
+            use crate::modules::tools::{self, convert, eval, fmt_num, tz};
+            let cases: [(&str, f64); 24] = [
+                ("1250*15%", 187.5),
+                ("200+10%", 220.0),
+                ("200-10%", 180.0),
+                ("100*(1+5%)", 105.0),
+                ("50%", 0.5),
+                ("2^10", 1024.0),
+                ("-2^2", -4.0),
+                ("2^-1", 0.5),
+                ("(1+2)*3", 9.0),
+                ("2(3+4)", 14.0),
+                ("3x4", 12.0),
+                ("12 × 3 ÷ 4", 9.0),
+                ("sqrt(16)+2", 6.0),
+                ("sin(30)", 0.5),
+                ("cos(60)", 0.5),
+                ("log(1000)", 3.0),
+                ("0xFF+1", 256.0),
+                ("0b1010", 10.0),
+                ("10/4", 2.5),
+                ("5!", 120.0),
+                ("1,250+250", 1500.0),
+                ("(2+3", 5.0),
+                ("2e3", 2000.0),
+                ("2pi", std::f64::consts::TAU),
+            ];
+            let mut bad = Vec::new();
+            for (e, want) in cases {
+                match eval(e) {
+                    Ok(v) if (v - want).abs() <= 1e-9 * want.abs().max(1.0) => {}
+                    r => bad.push(format!("{e} -> {r:?}")),
+                }
+            }
+            for e in ["1/0", "2+", "foo(3)", "(1+2))", "3!!!!"] {
+                if eval(e).is_ok() && e != "3!!!!" {
+                    bad.push(format!("{e} should be an error"));
+                }
+            }
+            for (v, want) in [(1234567.891, "1,234,567.891"), (0.1 + 0.2, "0.3"), (-1500.0, "-1,500"), (2.0f64.sqrt(), "1.414213562"), (0.0, "0")] {
+                if fmt_num(v) != want {
+                    bad.push(format!("fmt {v} -> {}", fmt_num(v)));
+                }
+            }
+            out += &format!("{:<4} calculator: 24 sums incl. 15%, +10%, 2^10, sqrt, sin, hex, 5!, and errors {:?}\n", if bad.is_empty() { "OK" } else { "FAIL" }, bad);
+
+            let mut bad = Vec::new();
+            for (cat, from, to, v, want, what) in [
+                (0usize, 0usize, 4usize, 1.0, 0.621371192, "1 km in mi"),
+                (2, 0, 1, 100.0, 212.0, "100 C in F"),
+                (2, 1, 0, -40.0, -40.0, "-40 F in C"),
+                (2, 0, 2, 0.0, 273.15, "0 C in K"),
+                (3, 6, 1, 5.0, 3600.0, "5 katha in ft2"),
+                (3, 7, 6, 1.0, 20.0, "1 bigha in katha"),
+                (3, 4, 5, 1.0, 100.0, "1 acre in decimal"),
+                (1, 5, 6, 1.0, 40.0, "1 maund in seer"),
+                (1, 6, 7, 1.0, 80.0, "1 seer in tola"),
+                (1, 0, 2, 1.0, 2.20462262, "1 kg in lb"),
+                (6, 3, 2, 1.0, 1024.0, "1 GB in MB"),
+                (6, 6, 2, 100.0, 11.920928955, "100 Mbit in MB"),
+                (5, 0, 2, 100.0, 62.137119224, "100 km/h in mph"),
+                (4, 3, 0, 1.0, 3.785411784, "1 gal in L"),
+            ] {
+                let got = convert(cat, from, to, v);
+                if (got - want).abs() > 1e-4 * want.abs().max(1.0) {
+                    bad.push(format!("{what} = {got}"));
+                }
+            }
+            out += &format!("{:<4} converter: 14 conversions incl. katha, bigha, decimal, maund, seer, tola, Mbit {:?}\n", if bad.is_empty() { "OK" } else { "FAIL" }, bad);
+
+            let mut bad: Vec<String> = tools::CITIES.iter().filter(|(_, k)| !tz::known(k)).map(|(c, _)| c.to_string()).collect();
+            let at = |y: u16, m: u16, d: u16, h: u16| tz::ft(&windows::Win32::Foundation::SYSTEMTIME { wYear: y, wMonth: m, wDay: d, wHour: h, ..Default::default() });
+            for (utc, key, want) in [
+                (at(2026, 1, 15, 6), "Bangladesh Standard Time", 12),
+                (at(2026, 1, 15, 6), "GMT Standard Time", 6),
+                (at(2026, 1, 15, 6), "Eastern Standard Time", 1),
+                (at(2026, 1, 15, 6), "AUS Eastern Standard Time", 17),
+                (at(2026, 7, 15, 6), "GMT Standard Time", 7),
+                (at(2026, 7, 15, 6), "Eastern Standard Time", 2),
+                (at(2026, 7, 15, 6), "AUS Eastern Standard Time", 16),
+                (at(2026, 7, 15, 6), "Arabian Standard Time", 10),
+            ] {
+                match tz::local(Some(key), utc) {
+                    Some(t) if t.wHour == want => {}
+                    t => bad.push(format!("{key}: {:?}", t.map(|t| t.wHour))),
+                }
+            }
+            out += &format!("{:<4} time zones: all 12 cities known, daylight saving right in January and July {:?}\n", if bad.is_empty() { "OK" } else { "FAIL" }, bad);
+            out += &format!("INFO time zones: {}\n", tz::debug());
+
+            let c = [30u8, 144, 255];
+            let fmt = (tools::hex_of(c), tools::rgb_of(c), tools::hsl_of(c));
+            let ok = fmt == ("#1E90FF".into(), "rgb(30, 144, 255)".into(), "hsl(210, 100%, 56%)".into()) && (tools::contrast([255, 255, 255], [0, 0, 0]) - 21.0).abs() < 0.01;
+            out += &format!("{:<4} color formats HEX / RGB / HSL and contrast {:?}\n", if ok { "OK" } else { "FAIL" }, fmt);
+
+            if let Some(ti) = find(a, "Tools") {
+                a.toast = None;
+                a.queue.clear();
+                a.settings_open = false;
+                a.expanded = true;
+                a.tab = ti;
+                a.switch_t = -10.0;
+                let qr = crate::modules::tools::qr_check("https://github.com/shabab239/WindyLand");
+                let long = crate::modules::tools::qr_check(&"x".repeat(3500));
+                out += &format!("{:<4} QR code for a link ({:?}), image copy size right, too-long text refused\n", if matches!(qr, Some((s, true)) if s >= 21) && long.is_none() { "OK" } else { "FAIL" }, qr);
+                let names = ["color", "calculator", "QR code", "converter"];
+                let mut missing = Vec::new();
+                for (k, id) in [(0usize, 10u32), (1, 40), (2, 62), (3, 100)] {
+                    a.call(ti, |m, c| m.action(1 + k as u32, (0.0, 0.0), c));
+                    a.release_keyboard();
+                    out += &snap(a, &format!("tools: {}", names[k]));
+                    if !a.hits.iter().any(|h| h.module == ti && h.id == id) {
+                        missing.push(names[k]);
+                    }
+                }
+                a.call(ti, |m, c| m.action(77, (0.0, 0.0), c));
+                out += &snap(a, "tools: time zones");
+                let cities = a.hits.iter().filter(|h| h.module == ti && (110..122).contains(&h.id)).count();
+                a.call(ti, |m, c| m.action(73, (0.0, 0.0), c));
+                out += &format!("{:<4} Tools tab shows all four tools and 12 time-zone cities {:?}\n", if missing.is_empty() && cities == 12 { "OK" } else { "FAIL" }, (missing, cities));
+                // Typing a sum and pressing Enter keeps it in the history.
+                a.call(ti, |m, c| m.action(2, (0.0, 0.0), c));
+                let kb = a.keyboard == Some(ti);
+                for ch in "1250*15%".chars() {
+                    a.on_char(ch);
+                }
+                a.on_key(0x0D);
+                let hist = crate::modules::tools::test_last(a.modules[ti].debug_state());
+                a.on_key(0x1B);
+                a.on_key(0x1B);
+                a.release_keyboard();
+                out += &format!("{:<4} calculator takes typing, Enter keeps 1250*15% = 187.5 ({hist})\n", if kb && hist.contains("187.5") { "OK" } else { "FAIL" });
+                // Labels fit.
+                let mut tight = Vec::new();
+                let gfx = &mut a.gfx as *mut Gfx;
+                for (cat, room) in tools::unit_room(|s| unsafe { (*gfx).measure(s, 11.5, Weight::Semi) }, modules::PANEL.0 - 118.0 - 8.0) {
+                    if room < 0.0 {
+                        tight.push(cat);
+                    }
+                }
+                let cat_w = (modules::PANEL.0 - 5.0 * 7.0) / 8.0 - 6.0;
+                for c in tools::CATS.iter().map(|c| c.0).chain(["Zones"]) {
+                    if a.gfx.measure(c, 11.5, Weight::Semi) > cat_w {
+                        tight.push(c);
+                    }
+                }
+                let city_w = (modules::PANEL.0 - 30.0) / 6.0 - 16.0;
+                for (c, _) in tools::CITIES {
+                    if a.gfx.measure(c, 10.5, Weight::Regular) > city_w {
+                        tight.push(c);
+                    }
+                }
+                for (_, n, _) in [("", "Calculator", ""), ("", "Converter", ""), ("", "QR code", ""), ("", "Color", "")] {
+                    if a.gfx.measure(n, 11.5, Weight::Semi) + 20.0 > (modules::PANEL.0 - 18.0) / 4.0 - 12.0 {
+                        tight.push(n);
+                    }
+                }
+                for (s, w) in [("Pick from screen", 140.0 - 16.0), ("Copy image", 110.0 - 16.0), ("Esc cancels, arrows nudge", 149.5)] {
+                    if a.gfx.measure(s, if w > 149.0 { 10.0 } else { 12.0 }, Weight::Semi) > w {
+                        tight.push(s);
+                    }
+                }
+                out += &format!("{:<4} Tools labels fit {:?}\n", if tight.is_empty() { "OK" } else { "FAIL" }, tight);
+                // "Pick from screen" closes the notch first, then the result
+                // reopens the Tools tab with the colour.
+                a.call(ti, |m, c| m.action(tools::A_TEST_NO_OVERLAY, (0.0, 0.0), c));
+                a.call(ti, |m, c| m.action(1, (0.0, 0.0), c));
+                let tgt = a.target();
+                a.cur = tgt;
+                a.render(tgt, 0.0);
+                if let Some(h) = a.hits.iter().find(|h| h.module == ti && h.id == 10).copied() {
+                    a.on_down(h.rect.cx(), h.rect.cy());
+                    a.on_up(h.rect.cx(), h.rect.cy());
+                }
+                let closed = !a.expanded;
+                *tools::picker::RESULT.lock().unwrap() = Some(Some([0x12, 0x34, 0x56]));
+                a.tick();
+                let back = a.expanded && a.tab == ti && a.modules[ti].debug_state().contains("colors");
+                out += &format!("{:<4} Pick from screen closes the notch, and the picked color reopens Tools ({})\n", if closed && back { "OK" } else { "FAIL" }, a.modules[ti].debug_state());
+                // The screenshot the picker uses matches the real screen.
+                match tools::picker::capture() {
+                    Some(s) => {
+                        let screen = unsafe { GetDC(None) };
+                        let mut same = 0;
+                        for (fx, fy) in [(0.1f32, 0.1f32), (0.5, 0.5), (0.9, 0.2), (0.3, 0.8), (0.7, 0.7)] {
+                            let (x, y) = ((s.w as f32 * fx) as i32, (s.h as f32 * fy) as i32);
+                            let p = unsafe { GetPixel(screen, s.x + x, s.y + y) };
+                            let real = [(p.0 & 0xff) as u8, ((p.0 >> 8) & 0xff) as u8, ((p.0 >> 16) & 0xff) as u8];
+                            if s.at(x, y) == Some(real) {
+                                same += 1;
+                            }
+                        }
+                        unsafe { ReleaseDC(None, screen) };
+                        out += &format!("{:<4} color picker screenshot {}x{} matches the screen ({same}/5 points)\n", if same >= 3 { "OK" } else { "INFO" }, s.w, s.h);
+                        if std::env::var("WINDYLAND_TEST_PICKER").is_ok() {
+                            *tools::picker::RESULT.lock().unwrap() = None;
+                            let up = tools::picker::start(a.hwnd);
+                            let clicked = tools::picker::test_click(12, 12);
+                            let got = tools::picker::RESULT.lock().unwrap().take();
+                            out += &format!("{:<4} color picker window opens and picks where clicked ({:?})\n", if up && clicked && got.is_some() && !tools::picker::active() { "OK" } else { "FAIL" }, got);
+                        }
+                    }
+                    None => out += "INFO color picker: couldn't take a screenshot (no desktop?)\n",
+                }
+                a.call(ti, |m, c| m.action(1, (0.0, 0.0), c));
+                a.expanded = false;
+            } else {
+                out += "FAIL Tools tab missing\n";
+            }
         }
         // Resize animation: soft spring that settles quickly with a small
         // overshoot, and content that fades in after a tab switch.
@@ -3491,7 +4308,7 @@ pub fn selftest() -> String {
             let ok = a.prev_shown.0 == t0 && a.switch_dir > 0.0 && old_hits == 0 && new_hits > 0 && a.gfx.last_err.is_none();
             out += &format!("{:<4} tab switch slides old content out, new in (old hits {old_hits}, new {new_hits})\n", if ok { "OK" } else { "FAIL" });
             // The highlight pill glides to the new tab instead of jumping.
-            let slot = TAB_H + 4.0;
+            let slot = TAB_H + TAB_GAP;
             let target_off = tabs.iter().position(|&i| i == t1).unwrap_or(0) as f32 * slot;
             a.pill_off = 0.0;
             a.pill_last = a.t() - 0.016;
@@ -3647,6 +4464,7 @@ pub fn selftest() -> String {
             match (ready, &sent, got) {
                 (true, Ok(_), Some(ms)) => out += &format!("OK   a real Windows notification reached the notch in {ms:.0} ms\n"),
                 (_, _, None) if quiet => out += "INFO live notification test skipped: Do Not Disturb is on\n",
+                (false, _, _) if std::env::var("CI").is_ok() => out += "INFO notification access: not available on this build server\n",
                 (false, _, _) => out += "FAIL notification access: Windows didn't allow the listener\n",
                 (_, Err(e), _) => out += &format!("INFO live notification test: couldn't send a test notification ({e})\n"),
                 _ => out += "FAIL a real Windows notification never reached the notch (5 s)\n",
@@ -3931,6 +4749,37 @@ pub fn render_docs(dir: &std::path::Path) -> String {
             a.tab = clip;
             shot(a, dir, "panel_clipboard");
         }
+        if let Some(p) = find(a, "Prayer Times") {
+            for k in [0u32, 2, 3, 4, 5] {
+                a.call(p, |m, c| m.action(90 + k, (0.0, 0.0), c));
+            }
+            a.tab = p;
+            shot(a, dir, "panel_prayer");
+            a.call(p, |m, c| m.action(crate::modules::prayer::A_TEST_RELOAD, (0.0, 0.0), c));
+        }
+        if let Some(t) = find(a, "Tools") {
+            a.call(t, |m, c| m.action(crate::modules::tools::A_DEMO, (0.0, 0.0), c));
+            a.tab = t;
+            for (k, name) in [(1u32, "panel_tools_color"), (2, "panel_tools_calc"), (3, "panel_tools_qr"), (4, "panel_tools_convert")] {
+                a.call(t, |m, c| m.action(k, (0.0, 0.0), c));
+                a.release_keyboard();
+                shot(a, dir, name);
+            }
+            a.call(t, |m, c| m.action(77, (0.0, 0.0), c));
+            shot(a, dir, "panel_tools_zones");
+            a.call(t, |m, c| m.action(73, (0.0, 0.0), c));
+            a.call(t, |m, c| m.action(1, (0.0, 0.0), c));
+        }
+        if let Some(g) = find(a, "AI Agents") {
+            a.call(g, |m, c| m.action(crate::modules::agents::A_DEMO, (0.0, 0.0), c));
+            a.tab = g;
+            shot(a, dir, "panel_agents");
+        }
+        if let Some(m) = find(a, "System Monitor") {
+            a.call(m, |x, c| x.action(crate::modules::monitor::A_DEMO, (0.0, 0.0), c));
+            a.tab = m;
+            shot(a, dir, "panel_monitor");
+        }
         a.open_settings();
         a.settings_page = 0;
         shot(a, dir, "settings_general");
@@ -3953,7 +4802,7 @@ pub fn render_docs(dir: &std::path::Path) -> String {
             ("toast_charging", Toast::new("power", glyph::CHARGING, col::GREEN, "Charging", "Charger connected").right("70%").progress(0.7)),
             ("toast_volume", Toast::new("volume", glyph::VOLUME, col::TEXT, "Volume", "Output").right("45%").progress(0.45)),
             ("toast_caps", Toast::new("caps", glyph::CAPS, col::ACCENT, "Caps Lock", "On")),
-            ("toast_bt", Toast::new("bt", glyph::HEADPHONE, col::BLUE, "AirBuds Pro", "Connected")),
+            ("toast_bt", Toast::new("bt", glyph::HEADPHONE, col::BLUE, "Earbuds", "Connected")),
             ("toast_lang", Toast::new("lang", glyph::KEYBOARD, col::BLUE, "Bangla (Bangladesh)", "Keyboard language").right("BN")),
             (
                 "toast_notification",
@@ -4138,7 +4987,19 @@ pub fn render_demo(dir: &std::path::Path) -> String {
         let notes = find(a, "Notifications").unwrap_or(0);
         let privacy = find(a, "Privacy").unwrap_or(usize::MAX);
         let prayer = find(a, "Prayer Times").unwrap_or(usize::MAX);
+        let tools = find(a, "Tools").unwrap_or(usize::MAX);
+        let agents = find(a, "AI Agents").unwrap_or(usize::MAX);
+        let monitor = find(a, "System Monitor").unwrap_or(usize::MAX);
         a.call(clip, |m, c| m.action(crate::modules::clipboard::A_DEMO_DOCS, (0.0, 0.0), c));
+        if tools != usize::MAX {
+            a.call(tools, |m, c| m.action(crate::modules::tools::A_DEMO, (0.0, 0.0), c));
+        }
+        if agents != usize::MAX {
+            a.call(agents, |m, c| m.action(crate::modules::agents::A_DEMO, (0.0, 0.0), c));
+        }
+        if monitor != usize::MAX {
+            a.call(monitor, |m, c| m.action(crate::modules::monitor::A_DEMO, (0.0, 0.0), c));
+        }
         a.tab = music;
         a.tick();
         a.cur = a.target();
@@ -4153,8 +5014,11 @@ pub fn render_demo(dir: &std::path::Path) -> String {
         d.sub("A short welcome tour shows the basics");
         d.a.onboarding = Some(2);
         d.wait(2.4);
-        d.sub("and what you can change in Settings");
+        d.sub("the panels worth knowing");
         d.a.onboarding = Some(3);
+        d.wait(2.4);
+        d.sub("and what you can change in Settings");
+        d.a.onboarding = Some(4);
         d.wait(2.8);
         d.a.onboarding = None;
         d.wait(0.5);
@@ -4191,8 +5055,11 @@ pub fn render_demo(dir: &std::path::Path) -> String {
             (todo, "To-do list with reminders"),
             (water, "Water reminder"),
             (shelf, "A shelf for files you're working on"),
-            (clip, "Clipboard history"),
+            (clip, "Clipboard history: click to paste"),
             (prayer, "Prayer times, worked out on your PC"),
+            (tools, "Tools: a color picker for anything on screen"),
+            (agents, "AI agents: is Hermes or Claude Code working, or waiting for you?"),
+            (monitor, "System monitor: CPU, memory and network"),
         ] {
             if i == usize::MAX {
                 continue;
@@ -4213,6 +5080,36 @@ pub fn render_demo(dir: &std::path::Path) -> String {
             d.click_at(APP_HIT, i as u32, 0.35);
             d.sub(text);
             d.wait(0.95);
+            if i == shelf {
+                d.point(shelf, crate::modules::shelf::A_SNIP, 0.5);
+                d.sub("Screenshots go straight onto the Shelf");
+                d.wait(1.2);
+            }
+            if i == clip {
+                d.click_at(clip, crate::modules::clipboard::A_SEARCH, 0.4);
+                d.sub("Search it, or save snippets you paste often");
+                for ch in "meet".chars() {
+                    d.wait(0.12);
+                    d.a.on_char(ch);
+                }
+                d.wait(1.1);
+                d.a.on_key(0x1B);
+                d.a.on_key(0x1B);
+                d.a.release_keyboard();
+            }
+            if i == tools {
+                for (k, text) in [(2u32, "a calculator that answers as you type"), (3, "QR codes of whatever you copy"), (4, "and a converter, with katha and bigha")] {
+                    d.click_at(tools, k, 0.35);
+                    d.a.release_keyboard();
+                    d.sub(text);
+                    d.wait(1.0);
+                }
+                d.click_at(tools, 77, 0.35);
+                d.sub("and world time zones");
+                d.wait(1.1);
+                d.a.call(tools, |m, c| m.action(73, (0.0, 0.0), c));
+                d.click_at(tools, 1, 0.3);
+            }
         }
         // The mouse wheel walks back through the panels.
         d.sub("Or roll the mouse wheel to switch panels");
@@ -4235,6 +5132,18 @@ pub fn render_demo(dir: &std::path::Path) -> String {
         d.a.call(notes, |m, c| m.action(crate::modules::notifs::A_DEMO, (0.0, 0.0), c));
         d.wait(2.6);
         d.a.toast = None;
+        if agents != usize::MAX {
+            d.sub("Hermes needs your OK? The island tells you");
+            d.a.call(agents, |m, c| m.action(crate::modules::agents::A_DEMO_ASK, (0.0, 0.0), c));
+            d.wait(2.4);
+            d.a.toast = None;
+            d.a.queue.clear();
+            d.sub("and when it's done");
+            d.a.call(agents, |m, c| m.action(crate::modules::agents::A_DEMO_DONE, (0.0, 0.0), c));
+            d.wait(2.2);
+            d.a.toast = None;
+            d.a.queue.clear();
+        }
         if prayer != usize::MAX {
             d.sub("A reminder at each prayer time");
             d.a.call(prayer, |m, c| m.action(crate::modules::prayer::A_DEMO, (0.0, 0.0), c));
@@ -4309,13 +5218,67 @@ fn draw_mascot(ui: &mut Ui, area: Rect, kind: Mascot, mood: Mood, t: f64, origin
     mascot::draw(ui, area, kind, mood, t, look);
 }
 
-/// Short names for Settings > Panels.
+/// Tooltips for Settings hits (by id).
+fn settings_tip(id: u32) -> &'static str {
+    match id {
+        S_STYLE => "Clock, music and mascot in a notch",
+        11 => "A smaller notch",
+        12 => "Just a thin bar until you hover",
+        13 => "Invisible until you hover the edge",
+        i if (S_EDGE..S_EDGE + 4).contains(&i) => "Put the notch on this screen edge",
+        S_CENTER => "Move it back to the middle of the edge",
+        S_MASCOT => "Show the clock instead of a mascot",
+        i if (S_MASCOT + 1..S_MASCOT + 20).contains(&i) => "Use this mascot when the notch is idle",
+        S_MASCOT_ALWAYS => "Keep the mascot out all the time (Full style)",
+        i if (S_MASCOT_POS..S_MASCOT_POS + 3).contains(&i) => "Where the mascot sits in the notch",
+        i if (S_SOUND..S_SOUND + 10).contains(&i) => "Use this sound for reminders (plays it once)",
+        90 => "Style, startup and updates",
+        91 => "Notifications, mic dots and clipboard",
+        92 => "Show or hide panels",
+        S_STARTUP => "Start WindyLand when you sign in to Windows",
+        S_VOLUME => "Show a bar when you change the volume",
+        S_UPDATE_AUTO => "Look for new versions twice a day",
+        S_UPDATES => "Look for a new version now",
+        S_DATA => "Open the folder where your data is kept",
+        S_GITHUB => "Source code, releases and issues",
+        S_POLICY => "What WindyLand keeps and reads",
+        S_QUIT => "Close WindyLand (start it again from the Start menu)",
+        S_NOTIF_ON => "Show other apps' Windows notifications in the notch",
+        S_NOTIF_TEXT => "Off: only the app name shows",
+        S_NOTIF_BANNERS => "Windows' own notification settings",
+        S_NOTIF_UNMUTE => "Show the apps you muted again",
+        S_PRIVACY => "A dot while an app uses the mic or camera",
+        S_CLIP_ON => "Keep a history of what you copy",
+        S_CLIP_MODE => "Record copied text only",
+        71 => "Record copied text and files",
+        72 => "Record text, files and pictures",
+        i if (S_PANEL..S_PANEL + 64).contains(&i) => "Show or hide this panel",
+        _ => "",
+    }
+}
+
+/// Tooltips for welcome-tour hits (by id).
+fn onboard_tip(id: u32) -> &'static str {
+    match id {
+        O_NEXT => "Next step",
+        O_BACK => "Previous step",
+        O_SKIP => "Skip the tour (Welcome tour in the tray menu brings it back)",
+        O_SETTINGS => "Finish and open Settings",
+        i if (O_STYLE..O_STYLE + 4).contains(&i) => "Use this look for the closed notch",
+        i if (O_EDGE..O_EDGE + 4).contains(&i) => "Put the notch on this screen edge",
+        _ => "",
+    }
+}
+
+/// Short names for Settings > Panels and the panel header.
 fn panel_name(title: &'static str) -> &'static str {
     match title {
         "Now Playing" => "Music",
         "TodoList" => "To-do",
         "Water Reminder" => "Water",
         "Prayer Times" => "Prayer",
+        "AI Agents" => "Agents",
+        "System Monitor" => "Monitor",
         t => t,
     }
 }
@@ -4397,6 +5360,11 @@ fn run_deferred(list: Vec<Deferred>) {
 }
 
 extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
+    if msg == WM_COPYDATA {
+        if let Some(r) = crate::modules::agents::on_copydata(hwnd, lp) {
+            return r;
+        }
+    }
     if msg == WM_DESTROY {
         tray::remove(hwnd);
         unsafe { PostQuitMessage(0) };

@@ -22,6 +22,10 @@ open, move away to close. Free and open source.
 | **To-do** with timed reminders | **Water reminder** with an hourly chart |
 | <img src="docs/images/shelf.png" alt="File shelf"> | <img src="docs/images/clipboard.png" alt="Clipboard history"> |
 | **File shelf**: drop in, drag out | **Clipboard history**: text, files or images, pin to keep |
+| <img src="docs/images/tools.png" alt="Tools"> | <img src="docs/images/prayer.png" alt="Prayer times"> |
+| **Tools**: color picker, calculator, QR codes, unit and time-zone converter | **Prayer times** worked out on your PC, with reminders |
+| <img src="docs/images/agents.png" alt="AI agents"> | <img src="docs/images/monitor.png" alt="System monitor"> |
+| **AI agents**: Hermes, Claude Code and Codex working, waiting for you, done | **System monitor**: CPU, memory, network, also on the closed notch |
 
 <img src="docs/images/styles.png" alt="Notch styles">
 

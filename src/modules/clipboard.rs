@@ -1,5 +1,6 @@
-//! Clipboard history: what you copy is kept in a list; click an entry to put
-//! it back on the clipboard. Off until the user turns it on (Settings or the
+//! Clipboard history: what you copy is kept in a list; click an entry to
+//! paste it into the app you were using (the copy icon only copies it).
+//! Off until the user turns it on (Settings or the
 //! tab), and records text only unless they choose Text + files or Everything
 //! (adds images). Pinned text/files are saved and survive restarts;
 //! everything else, and every image, lives in memory only. Anything a
@@ -88,6 +89,9 @@ struct Entry {
 const A_CLEAR: u32 = 1;
 /// Turn recording on/off (same as the Settings switch).
 pub const A_TOGGLE: u32 = 2;
+pub const A_SEARCH: u32 = 3;
+pub const A_SNIPPET: u32 = 4;
+const A_FIELD: u32 = 5;
 /// Self-test / docs: add 35 numbered demo entries.
 pub const A_DEMO: u32 = 990;
 /// Docs/demo video: a few realistic entries.
@@ -95,6 +99,7 @@ pub const A_DEMO_DOCS: u32 = 991;
 const K_COPY: u32 = 1;
 const K_PIN: u32 = 2;
 const K_DELETE: u32 = 3;
+const K_PASTE: u32 = 4;
 
 fn eid(kind: u32, id: u32) -> u32 {
     (kind << 24) | (id & 0xFF_FFFF)
@@ -110,11 +115,36 @@ pub struct Clipboard {
     thumbs: HashMap<u32, (u32, ID2D1Bitmap)>,
     scroll: f32,
     max_scroll: f32,
-    /// Entry id just copied back, and when (for the "Copied" label).
-    copied: Option<(u32, f64)>,
+    /// Entry id just copied back or pasted, when, and the label to show.
+    copied: Option<(u32, f64, &'static str)>,
+    /// The app you were using before reaching for the notch (paste goes there).
+    target: isize,
+    own: isize,
+    pub last_paste: Option<Paste>,
+    /// Search box text (Some while searching).
+    search: Option<String>,
+    /// A new snippet being typed.
+    snippet: Option<String>,
 }
 
 impl Clipboard {
+    /// Keep track of the app in front (not WindyLand), where a paste goes.
+    fn note_target(&mut self) {
+        let fg = unsafe { GetForegroundWindow() };
+        if paste_target_ok(fg, HWND(self.own as *mut _)) {
+            self.target = fg.0 as isize;
+        }
+    }
+
+    fn paste_target(&mut self) -> HWND {
+        let t = TEST_TARGET.load(Ordering::Relaxed);
+        if t != 0 {
+            return HWND(t as *mut _);
+        }
+        self.note_target();
+        HWND(self.target as *mut _)
+    }
+
     pub fn new(hwnd: HWND) -> Clipboard {
         let incoming = Arc::new(Mutex::new(Vec::new()));
         let st = store::Settings::load();
@@ -130,6 +160,11 @@ impl Clipboard {
             scroll: 0.0,
             max_scroll: 0.0,
             copied: None,
+            target: 0,
+            own: hwnd.0 as isize,
+            last_paste: None,
+            search: None,
+            snippet: None,
         };
         c.load();
         spawn_listener(incoming, on, mode, hwnd.0 as isize);
@@ -206,11 +241,79 @@ impl Clipboard {
         }
     }
 
+    /// The entry matches the search box (case-insensitive; files by path).
+    fn matches(&self, e: &Entry) -> bool {
+        let q = match &self.search {
+            Some(q) if !q.trim().is_empty() => q.trim().to_lowercase(),
+            _ => return true,
+        };
+        match &e.content {
+            Content::Text(t) => t.to_lowercase().contains(&q),
+            Content::Files(f) => f.iter().any(|p| p.to_lowercase().contains(&q)),
+            Content::Image(_) => false,
+        }
+    }
+
+    /// Save typed text as a snippet: a pinned entry, kept after restarts.
+    pub fn add_snippet(&mut self, text: &str) -> bool {
+        let t = text.trim_end_matches(['\r', '\n']).to_string();
+        if t.trim().is_empty() {
+            return false;
+        }
+        let c = Content::Text(t);
+        self.add(c.clone());
+        if let Some(e) = self.items.iter_mut().find(|e| e.content == c) {
+            e.pinned = true;
+        }
+        self.save();
+        true
+    }
+
+    fn editing(&mut self) -> Option<&mut String> {
+        if let Some(t) = self.search.as_mut() {
+            return Some(t);
+        }
+        self.snippet.as_mut()
+    }
+
     /// Pinned first, then by recency.
     fn order(&self) -> Vec<Entry> {
         let mut v: Vec<Entry> = self.items.iter().filter(|e| e.pinned).cloned().collect();
         v.extend(self.items.iter().filter(|e| !e.pinned).cloned());
         v
+    }
+}
+
+/// The header line beside the switch.
+pub fn status_line(on: bool, mode: u8) -> String {
+    if !on {
+        return "Not recording new copies".into();
+    }
+    let what = match mode {
+        0 => "text",
+        1 => "text + files",
+        _ => "everything",
+    };
+    format!("Keeping {what} (click to paste)")
+}
+
+/// A one-line text box with a blinking caret (keyboard focus is the app's).
+fn field(ui: &mut Ui, r: Rect, text: &str, placeholder: &str) {
+    let r = r.centered(r.w, 26.0);
+    ui.fill_rr(r, 8.0, col::TEXT.with_a(0.08));
+    ui.stroke_rr(r, 8.0, col::BLUE.with_a(0.7), 1.0);
+    ui.hit(r, A_FIELD);
+    let tr = r.inset_xy(10.0, 0.0);
+    if text.is_empty() {
+        ui.text(placeholder, tr, 11.5, col::FAINT, Weight::Regular, Align::Left);
+    }
+    let one: String = text.replace(['\r', '\n'], " ");
+    let tw = ui.measure(&one, 12.0, Weight::Regular);
+    let align = if tw > tr.w - 6.0 { Align::Right } else { Align::Left };
+    ui.text(&one, Rect::new(tr.x, tr.y, tr.w - 4.0, tr.h), 12.0, col::TEXT, Weight::Regular, align);
+    if (ui.t * 1.8) as i64 % 2 == 0 {
+        let cx = if align == Align::Right { tr.r() - 4.0 } else { tr.x + tw + 1.0 };
+        ui.line(cx, tr.cy() - 7.0, cx, tr.cy() + 7.0, col::BLUE, 1.5);
     }
 }
 
@@ -247,6 +350,22 @@ fn ago(at: f64) -> String {
 }
 
 impl Module for Clipboard {
+    fn tip(&self, id: u32) -> &'static str {
+        match id {
+            A_CLEAR => "Remove everything that isn't pinned",
+            A_TOGGLE => "Record what you copy, or stop",
+            A_SEARCH => "Search the history",
+            A_SNIPPET => "New snippet (kept like a pin)",
+            A_FIELD => "Type here",
+            i => match i >> 24 {
+                K_PASTE => "Click to paste · the copy icon only copies",
+                K_COPY => "Copy only (don't paste)",
+                K_PIN => "Pin: keeps it at the top and after a restart",
+                K_DELETE => "Remove",
+                _ => "",
+            },
+        }
+    }
     fn title(&self) -> &'static str {
         "Clipboard"
     }
@@ -272,36 +391,51 @@ impl Module for Clipboard {
     }
 
     fn draw(&mut self, ui: &mut Ui, mut r: Rect) {
+        self.note_target();
         let on = self.on.load(Ordering::Relaxed);
         let mode = self.mode.load(Ordering::Relaxed);
-        if !on && self.items.is_empty() {
+        if !on && self.items.is_empty() && self.snippet.is_none() {
             // Off by default: explain, and offer the switch.
             let mut c = r.centered(r.w.min(420.0), 96.0);
             ui.text("Clipboard history is off", c.cut_top(20.0, 4.0), 14.0, col::TEXT, Weight::Semi, Align::Center);
             ui.text("Turn it on to keep what you copy and paste it again later.", c.cut_top(18.0, 2.0), 12.0, col::DIM, Weight::Regular, Align::Center);
             ui.text("Text only by default; change it in Settings. Nothing leaves your PC.", c.cut_top(18.0, 10.0), 11.0, col::FAINT, Weight::Regular, Align::Center);
-            ui.button_accent(c.cut_top(28.0, 0.0).centered(200.0, 28.0), "Turn on clipboard history", A_TOGGLE, col::BLUE);
+            let mut row = c.cut_top(28.0, 0.0).centered(320.0, 28.0);
+            ui.button_accent(row.cut_left(200.0, 10.0), "Turn on clipboard history", A_TOGGLE, col::BLUE);
+            ui.button(row, "New snippet", A_SNIPPET);
             return;
         }
         let mut head = r.cut_top(26.0, 8.0);
         let sw = head.cut_right(150.0, 6.0);
         ui.toggle(sw, if on { "Recording" } else { "Off" }, on, A_TOGGLE, col::BLUE);
-        if self.items.iter().any(|e| !e.pinned) {
+        let editing = self.search.is_some() || self.snippet.is_some();
+        if self.items.iter().any(|e| !e.pinned) && !editing {
             ui.button(head.cut_right(60.0, 8.0), "Clear", A_CLEAR);
         }
-        let what = match mode {
-            0 => "text",
-            1 => "text and files",
-            _ => "text, files and images",
-        };
-        let status = if on { format!("Keeping {what}") } else { "Not recording new copies".to_string() };
-        ui.text(&status, head, 12.0, if on { col::DIM } else { col::ACCENT }, Weight::Regular, Align::Left);
+        let add = head.cut_right(26.0, 4.0);
+        ui.icon_btn(add.centered(26.0, 26.0), glyph::ADD, A_SNIPPET, 11.0, if self.snippet.is_some() { col::BLUE } else { col::DIM }, Some(col::BTN), "New snippet (kept like a pin)");
+        let find = head.cut_right(26.0, 8.0);
+        let searching = self.search.is_some();
+        ui.icon_btn(find.centered(26.0, 26.0), if searching { glyph::CLOSE } else { "\u{E721}" }, A_SEARCH, 11.0, if searching { col::BLUE } else { col::DIM }, Some(col::BTN), if searching { "Close search" } else { "Search the history" });
+        if let Some(q) = self.search.clone() {
+            field(ui, head, &q, "Search, Enter pastes the first match");
+        } else if let Some(t) = self.snippet.clone() {
+            field(ui, head, &t, "Type a snippet, Enter saves it");
+        } else {
+            let status = status_line(on, mode);
+            ui.text(&status, head, 12.0, if on { col::DIM } else { col::ACCENT }, Weight::Regular, Align::Left);
+        }
 
         if self.items.is_empty() {
-            ui.text("Copy something and it shows up here. Click an entry to copy it again.", r, 12.0, col::FAINT, Weight::Regular, Align::Center);
+            ui.text("Copy something and it shows up here. Click an entry to paste it.", r, 12.0, col::FAINT, Weight::Regular, Align::Center);
             return;
         }
-        let order = self.order();
+        let order: Vec<Entry> = self.order().into_iter().filter(|e| self.matches(e)).collect();
+        if order.is_empty() {
+            let msg = if self.snippet.is_some() { "Type the text you paste often (an address, a number, a signature). Enter saves it." } else { "Nothing matches" };
+            ui.text_wrap(msg, r.inset_xy(20.0, 10.0), 12.0, col::FAINT, Weight::Regular, Align::Center);
+            return;
+        }
         let max_scroll = (order.len() as f32 * ROW_H - r.h).max(0.0);
         self.scroll = self.scroll.clamp(0.0, max_scroll);
         self.max_scroll = max_scroll;
@@ -344,7 +478,10 @@ impl Module for Clipboard {
                 ui.icon(g, ic, 12.0, c);
             }
             let is_image = matches!(e.content, Content::Image(_));
-            if hov {
+            // The result label shows for a moment (longer for the admin
+            // hint), then the hover buttons come back.
+            let just = self.copied.filter(|(id, at, l)| *id == e.id && now - *at < if l.len() > 8 { 3.0 } else if hov { 1.0 } else { 1.6 }).map(|(_, _, l)| l);
+            if hov && just.is_none() {
                 let del = row.cut_right(26.0, 2.0);
                 ui.icon_btn(del.centered(24.0, 24.0), glyph::DELETE, eid(K_DELETE, e.id), 11.0, col::DIM, None, "Remove");
                 // Images stay in memory only, so they can't be pinned.
@@ -354,19 +491,25 @@ impl Module for Clipboard {
                     let fg = if e.pinned { col::ACCENT } else { col::DIM };
                     ui.icon_btn(pin.centered(24.0, 24.0), glyph::PIN, eid(K_PIN, e.id), 11.0, fg, None, tip);
                 }
+                let cp = row.cut_right(26.0, 4.0);
+                ui.icon_btn(cp.centered(24.0, 24.0), glyph::COPY, eid(K_COPY, e.id), 11.0, col::DIM, None, "Copy only (don't paste)");
             } else {
-                let just = self.copied.map_or(false, |(id, at)| id == e.id && now - at < 1.5);
-                let label = if just { "Copied".to_string() } else { ago(e.at) };
+                let label = just.map_or_else(|| ago(e.at), |l| l.to_string());
                 let w = ui.measure(&label, 11.0, Weight::Semi) + 6.0;
                 let tr = row.cut_right(w, 6.0);
-                ui.text(&label, tr, 11.0, if just { col::GREEN } else { col::FAINT }, Weight::Semi, Align::Right);
+                let c = match just {
+                    Some("Pasted") | Some("Copied") => col::GREEN,
+                    Some(_) => col::ACCENT,
+                    None => col::FAINT,
+                };
+                ui.text(&label, tr, 11.0, c, Weight::Semi, Align::Right);
                 if e.pinned {
                     ui.icon(glyph::PIN, row.cut_right(16.0, 4.0), 10.0, col::ACCENT);
                 }
             }
             ui.text(&preview(&e.content), row, 12.5, col::TEXT, Weight::Regular, Align::Left);
             // Register the row last-but-under the buttons: buttons were cut out of `row`.
-            ui.hit(Rect::new(row_hit.x, row_hit.y, row.r() - row_hit.x, row_hit.h), eid(K_COPY, e.id));
+            ui.hit_tip(Rect::new(row_hit.x, row_hit.y, row.r() - row_hit.x, row_hit.h), eid(K_PASTE, e.id), "Click to paste · copy icon only copies");
         }
         ui.pop_clip();
     }
@@ -379,12 +522,99 @@ impl Module for Clipboard {
         true
     }
 
+    fn key(&mut self, vk: u16, ctrl: bool, ctx: &mut Ctx) -> bool {
+        let searching = self.search.is_some();
+        let Some(text) = self.editing() else { return false };
+        match vk {
+            0x0D if searching => {
+                // Enter pastes the first match.
+                let first = self.order().into_iter().find(|e| self.matches(e)).map(|e| e.id);
+                if let Some(id) = first {
+                    self.action(eid(K_PASTE, id), (0.0, 0.0), ctx);
+                }
+            }
+            0x0D => {
+                let t = text.clone();
+                self.snippet = None;
+                self.add_snippet(&t);
+                ctx.want_keyboard(false);
+            }
+            0x1B => {
+                if searching && !text.is_empty() {
+                    text.clear();
+                } else {
+                    self.search = None;
+                    self.snippet = None;
+                    ctx.want_keyboard(false);
+                }
+            }
+            0x08 => {
+                text.pop();
+            }
+            0x56 if ctrl => {
+                if let Some(t) = crate::modules::todo::clipboard_text() {
+                    let t: String = if searching { t.chars().filter(|c| !c.is_control()).take(100).collect() } else { t.chars().take(4000).collect() };
+                    text.push_str(&t);
+                }
+            }
+            _ => return false,
+        }
+        self.scroll = 0.0;
+        true
+    }
+
+    fn chr(&mut self, c: char, _ctx: &mut Ctx) -> bool {
+        let max = if self.search.is_some() { 100 } else { 4000 };
+        let Some(text) = self.editing() else { return false };
+        if c.is_control() || text.chars().count() >= max {
+            return false;
+        }
+        text.push(c);
+        self.scroll = 0.0;
+        true
+    }
+
+    fn animating(&self) -> bool {
+        // Caret blink while typing.
+        self.search.is_some() || self.snippet.is_some()
+    }
+
+    fn blur(&mut self) {
+        // An empty search or an unsaved empty snippet just closes.
+        if self.search.as_ref().map_or(false, |q| q.is_empty()) {
+            self.search = None;
+        }
+        if self.snippet.as_ref().map_or(false, |t| t.trim().is_empty()) {
+            self.snippet = None;
+        }
+    }
+
     fn action(&mut self, id: u32, _rel: Rel, ctx: &mut Ctx) {
         match id {
             A_CLEAR => {
                 self.items.retain(|e| e.pinned);
                 self.scroll = 0.0;
             }
+            A_SEARCH => {
+                if self.search.take().is_none() {
+                    self.search = Some(String::new());
+                    self.snippet = None;
+                    ctx.want_keyboard(true);
+                } else {
+                    ctx.want_keyboard(false);
+                }
+                self.scroll = 0.0;
+            }
+            A_SNIPPET => {
+                if self.snippet.take().is_none() {
+                    self.snippet = Some(String::new());
+                    self.search = None;
+                    ctx.want_keyboard(true);
+                } else {
+                    ctx.want_keyboard(false);
+                }
+            }
+            A_FIELD => ctx.want_keyboard(true),
             A_TOGGLE => {
                 ctx.settings.clip_on = !ctx.settings.clip_on;
                 ctx.settings.save();
@@ -411,7 +641,10 @@ impl Module for Clipboard {
                 let (kind, eid) = (id >> 24, id & 0xFF_FFFF);
                 let Some(i) = self.items.iter().position(|e| e.id == eid) else { return };
                 match kind {
-                    K_COPY => {
+                    K_COPY | K_PASTE => {
+                        if self.search.is_some() || self.snippet.is_some() {
+                            ctx.want_keyboard(false);
+                        }
                         let content = self.items[i].content.clone();
                         if set_clipboard(ctx.hwnd, &content) {
                             // Move it to the top now; the listener will see
@@ -422,7 +655,20 @@ impl Module for Clipboard {
                                 let e = self.items.remove(i);
                                 self.items.insert(0, e);
                             }
-                            self.copied = Some((eid, unix_now()));
+                            let label = if kind == K_PASTE {
+                                let target = self.paste_target();
+                                let res = paste_into(target, HWND(self.own as *mut _));
+                                self.last_paste = Some(res);
+                                match res {
+                                    Paste::Sent => "Pasted",
+                                    Paste::Elevated => "Copied: admin app, press Ctrl+V",
+                                    Paste::NoTarget => "Copied",
+                                }
+                            } else {
+                                self.last_paste = None;
+                                "Copied"
+                            };
+                            self.copied = Some((eid, unix_now(), label));
                         }
                     }
                     K_PIN => {
@@ -456,12 +702,14 @@ impl Module for Clipboard {
         let top = self.items.first().map(|e| preview(&e.content)).unwrap_or_default();
         let top_id = self.items.first().map_or(0, |e| e.id);
         format!(
-            "items={} unpinned={} pinned={pinned} images={} dupes={dupes} on={} mode={} top_id={top_id} top={top}",
+            "items={} unpinned={} pinned={pinned} images={} dupes={dupes} on={} mode={} paste={:?} shown={} top_id={top_id} top={top}",
             self.items.len(),
             self.items.len() - pinned,
             self.items.iter().filter(|e| matches!(e.content, Content::Image(_))).count(),
             self.on.load(Ordering::Relaxed),
-            self.mode.load(Ordering::Relaxed)
+            self.mode.load(Ordering::Relaxed),
+            self.last_paste,
+            self.items.iter().filter(|e| self.matches(e)).count(),
         )
     }
 }
@@ -630,6 +878,132 @@ fn read_clipboard(owner: HWND, mode: u8) -> Option<Content> {
 }
 
 /// Put `c` on the clipboard (text, or files as CF_HDROP for pasting in Explorer).
+// ------------------------------------------------------------------ paste
+
+/// What happened when an entry was clicked.
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub enum Paste {
+    /// Ctrl+V was sent to the app you were using.
+    Sent,
+    /// That app runs as administrator; Windows doesn't let a normal app type
+    /// into it, so it's only copied.
+    Elevated,
+    /// No app to paste into (only the taskbar or WindyLand was in front).
+    NoTarget,
+}
+
+/// Self-test: paste into this window instead of the app in front.
+pub static TEST_TARGET: std::sync::atomic::AtomicIsize = std::sync::atomic::AtomicIsize::new(0);
+
+/// Self-test: don't really press Ctrl+V.
+pub static PASTE_DRY_RUN: AtomicBool = AtomicBool::new(false);
+
+fn class_of(h: HWND) -> String {
+    let mut b = [0u16; 64];
+    let n = unsafe { GetClassNameW(h, &mut b) };
+    String::from_utf16_lossy(&b[..n.max(0) as usize])
+}
+
+/// A window we can paste into: a real, visible top-level app window that
+/// isn't WindyLand or the taskbar.
+pub fn paste_target_ok(h: HWND, own: HWND) -> bool {
+    if h.0.is_null() || h == own || !unsafe { IsWindow(h) }.as_bool() {
+        return false;
+    }
+    let mut pid = 0;
+    unsafe { GetWindowThreadProcessId(h, Some(&mut pid)) };
+    // Our own windows, except the self-test's text box.
+    if pid == std::process::id() && h.0 as isize != TEST_TARGET.load(Ordering::Relaxed) {
+        return false;
+    }
+    !matches!(class_of(h).as_str(), "Shell_TrayWnd" | "Shell_SecondaryTrayWnd" | "NotifyIconOverflowWindow" | "TopLevelWindowForOverflowXamlIsland")
+}
+
+fn elevated(process: windows::Win32::Foundation::HANDLE) -> bool {
+    use windows::Win32::Security::*;
+    use windows::Win32::System::Threading::OpenProcessToken;
+    unsafe {
+        let mut tok = windows::Win32::Foundation::HANDLE::default();
+        if OpenProcessToken(process, TOKEN_QUERY, &mut tok).is_err() {
+            return false;
+        }
+        let mut e = TOKEN_ELEVATION::default();
+        let mut len = 0;
+        let ok = GetTokenInformation(tok, TokenElevation, Some(&mut e as *mut _ as *mut _), std::mem::size_of::<TOKEN_ELEVATION>() as u32, &mut len).is_ok();
+        let _ = CloseHandle(tok);
+        ok && e.TokenIsElevated != 0
+    }
+}
+
+/// Is the app that owns `h` running as administrator while we aren't?
+fn blocked_by_admin(h: HWND) -> bool {
+    use windows::Win32::System::Threading::*;
+    unsafe {
+        if elevated(GetCurrentProcess()) {
+            return false;
+        }
+        let mut pid = 0;
+        GetWindowThreadProcessId(h, Some(&mut pid));
+        match OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid) {
+            Ok(p) => {
+                let e = elevated(p);
+                let _ = CloseHandle(p);
+                e
+            }
+            // Can't even look at it: most likely an admin or system app.
+            Err(_) => true,
+        }
+    }
+}
+
+/// Press Ctrl+V in `target` (the clipboard must already hold the entry).
+/// Holding Shift while clicking sends Ctrl+Shift+V, which many apps (browsers,
+/// Word, Slack, VS Code) take as "paste as plain text".
+pub fn paste_into(target: HWND, own: HWND) -> Paste {
+    use windows::Win32::UI::Input::KeyboardAndMouse::*;
+    if !paste_target_ok(target, own) {
+        return Paste::NoTarget;
+    }
+    if blocked_by_admin(target) {
+        return Paste::Elevated;
+    }
+    if PASTE_DRY_RUN.load(Ordering::Relaxed) {
+        return Paste::Sent;
+    }
+    unsafe {
+        // The notch never takes focus on a click, but a text box in another
+        // panel may have; hand it back first.
+        if GetForegroundWindow() != target {
+            let _ = SetForegroundWindow(target);
+        }
+    }
+    let t = target.0 as isize;
+    std::thread::spawn(move || {
+        // Let the focus change land and the mouse button come up.
+        std::thread::sleep(std::time::Duration::from_millis(70));
+        unsafe {
+            let target = HWND(t as *mut _);
+            if GetForegroundWindow() != target {
+                return;
+            }
+            let key = |vk: VIRTUAL_KEY, up: bool| INPUT {
+                r#type: INPUT_KEYBOARD,
+                Anonymous: INPUT_0 { ki: KEYBDINPUT { wVk: vk, wScan: 0, dwFlags: if up { KEYEVENTF_KEYUP } else { KEYBD_EVENT_FLAGS(0) }, time: 0, dwExtraInfo: 0 } },
+            };
+            let mut seq = Vec::new();
+            // Alt or Win held would turn Ctrl+V into something else.
+            for vk in [VK_MENU, VK_LWIN, VK_RWIN] {
+                if GetAsyncKeyState(vk.0 as i32) < 0 {
+                    seq.push(key(vk, true));
+                }
+            }
+            seq.extend([key(VK_CONTROL, false), key(VK_V, false), key(VK_V, true), key(VK_CONTROL, true)]);
+            SendInput(&seq, std::mem::size_of::<INPUT>() as i32);
+        }
+    });
+    Paste::Sent
+}
+
 pub fn set_clipboard(owner: HWND, c: &Content) -> bool {
     if !open_clipboard(owner) {
         return false;

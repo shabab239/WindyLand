@@ -14,16 +14,20 @@ use crate::store::Settings;
 use crate::time::Now;
 use crate::ui::Ui;
 
+pub mod agents;
 pub mod clipboard;
 pub mod example;
+pub mod monitor;
 pub mod music;
 pub mod notifs;
 pub mod pomodoro;
 pub mod prayer;
 pub mod privacy;
 pub mod shelf;
+pub mod snip;
 pub mod system;
 pub mod timer;
+pub mod tools;
 pub mod todo;
 pub mod update;
 pub mod water;
@@ -47,6 +51,9 @@ pub fn all(hwnd: HWND) -> Vec<Box<dyn Module>> {
         Box::new(shelf::Shelf::load()),
         Box::new(clipboard::Clipboard::new(hwnd)),
         Box::new(prayer::Prayer::load()),
+        Box::new(tools::Tools::new(hwnd)),
+        Box::new(agents::Agents::new()),
+        Box::new(monitor::Monitor::new()),
         Box::new(system::System::new(hwnd)),
         Box::new(privacy::Privacy::new()),
         Box::new(notifs::Notifs::new(hwnd)),
@@ -140,12 +147,17 @@ pub struct Ctx<'a> {
     pub(crate) toasts: &'a mut Vec<Toast>,
     pub(crate) open_tab: &'a mut Option<usize>,
     pub(crate) keyboard: &'a mut Option<bool>,
+    pub(crate) close: &'a mut bool,
 }
 
 impl<'a> Ctx<'a> {
     pub fn toast(&mut self, mut t: Toast) {
         t.module = self.module;
         self.toasts.push(t);
+    }
+    /// Close the open panel (e.g. before taking a screenshot).
+    pub fn close_panel(&mut self) {
+        *self.close = true;
     }
     /// Expand the notch and switch to this module's tab.
     pub fn open_my_tab(&mut self) {
@@ -207,6 +219,11 @@ pub trait Module {
     }
     /// Lost keyboard focus (user clicked elsewhere).
     fn blur(&mut self) {}
+    /// Tooltip for a hit registered without one (by id): what clicking it
+    /// does. Every hit in every panel should have one (self-tested).
+    fn tip(&self, id: u32) -> &'static str {
+        ""
+    }
     /// Priority of this module's "live activity" in the collapsed notch
     /// (highest wins), or None when it has nothing to show.
     fn live(&self) -> Option<u8> {
