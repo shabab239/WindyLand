@@ -468,7 +468,7 @@ impl Module for Todo {
     }
 }
 
-fn clipboard_text() -> Option<String> {
+pub(crate) fn clipboard_text() -> Option<String> {
     use windows::Win32::Foundation::HGLOBAL;
     use windows::Win32::System::DataExchange::*;
     use windows::Win32::System::Memory::*;

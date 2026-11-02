@@ -14,6 +14,7 @@ use crate::store::Settings;
 use crate::time::Now;
 use crate::ui::Ui;
 
+pub mod agent;
 pub mod clipboard;
 pub mod example;
 pub mod music;
@@ -40,6 +41,7 @@ pub const PANEL: (f32, f32) = (520.0, 176.0);
 pub fn all(hwnd: HWND) -> Vec<Box<dyn Module>> {
     vec![
         Box::new(music::Music::new(hwnd)),
+        Box::new(agent::Agent::new(hwnd)),
         Box::new(pomodoro::Pomodoro::new()),
         Box::new(timer::Timer::new()),
         Box::new(water::Water::load()),

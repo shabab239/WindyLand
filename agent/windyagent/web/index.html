@@ -1,0 +1,417 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tobi</title>
+<link rel="icon" href="/icon.png">
+<style>
+:root{
+  --bg:#0b0b0d; --panel:#151518; --panel2:#1d1d21; --line:rgba(255,255,255,.09);
+  --text:#f5f5f7; --dim:#9a9aa0; --accent:#ff9f0a; --green:#30d158; --red:#ff453a; --yellow:#ffd60a;
+  --r:16px;
+}
+@media (prefers-color-scheme: light){
+  :root{ --bg:#f4f4f6; --panel:#ffffff; --panel2:#ececf0; --line:rgba(0,0,0,.1); --text:#1c1c1e; --dim:#6b6b73; }
+}
+*{box-sizing:border-box}
+html,body{height:100%;margin:0}
+body{background:var(--bg);color:var(--text);font:13.5px/1.5 "Segoe UI Variable Text","Segoe UI",system-ui,sans-serif;display:flex;flex-direction:column}
+button{font:inherit;color:inherit;cursor:pointer;border:0;background:none}
+header{display:flex;align-items:center;gap:8px;padding:8px 12px;border-bottom:1px solid var(--line);background:var(--panel)}
+header img{width:26px;height:26px;border-radius:7px}
+header h1{font-size:15px;margin:0;font-weight:650;flex:1}
+.dot{width:8px;height:8px;border-radius:50%;background:var(--green);display:inline-block;margin-right:6px}
+.dot.off{background:var(--red)} .dot.busy{background:var(--yellow);animation:pulse 1s infinite}
+@keyframes pulse{50%{opacity:.35}}
+.icon{width:32px;height:32px;border-radius:9px;display:grid;place-items:center;color:var(--dim)}
+.icon:hover{background:var(--panel2);color:var(--text)}
+#log{flex:1;overflow-y:auto;padding:12px 12px 6px;scroll-behavior:smooth}
+.msg{max-width:92%;margin:0 0 12px;padding:9px 13px;border-radius:var(--r);word-wrap:break-word;overflow-wrap:anywhere}
+.msg.user{margin-left:auto;background:var(--accent);color:#000;border-bottom-right-radius:5px;white-space:pre-wrap}
+.msg.bot{background:var(--panel);border:1px solid var(--line);border-bottom-left-radius:5px}
+.msg.bot p{margin:0 0 .5em} .msg.bot p:last-child{margin:0}
+.msg code{background:var(--panel2);padding:1px 5px;border-radius:5px;font:12.5px Consolas,monospace}
+.msg pre{background:var(--panel2);padding:10px;border-radius:10px;overflow-x:auto;margin:.5em 0;font:12.5px/1.45 Consolas,monospace}
+.msg pre code{background:none;padding:0}
+.msg ul{margin:.3em 0;padding-left:1.2em}
+.msg a{color:var(--accent)}
+.note{color:var(--dim);font-size:12.5px;text-align:center;margin:6px 0 12px}
+.err{background:rgba(255,69,58,.12);border:1px solid rgba(255,69,58,.4);color:var(--text);padding:9px 13px;border-radius:var(--r);margin:0 0 12px}
+.tool{margin:0 0 10px;border:1px solid var(--line);border-radius:12px;background:var(--panel);overflow:hidden;max-width:92%}
+.tool summary{list-style:none;cursor:pointer;display:flex;gap:8px;align-items:center;padding:7px 11px;font-size:12.5px;color:var(--dim)}
+.tool summary::-webkit-details-marker{display:none}
+.tool b{color:var(--text);font-weight:600}
+.tool .args{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1}
+.tool .st{width:8px;height:8px;border-radius:50%;background:var(--yellow);flex:none}
+.tool.ok .st{background:var(--green)} .tool.bad .st{background:var(--red)} .tool.run .st{animation:pulse 1s infinite}
+.tool pre{margin:0;padding:9px 11px;border-top:1px solid var(--line);font:12px/1.45 Consolas,monospace;white-space:pre-wrap;max-height:260px;overflow:auto;color:var(--dim)}
+.confirm{margin:0 0 12px;border:1px solid var(--accent);border-radius:14px;background:var(--panel);padding:11px 13px;max-width:92%}
+.confirm h4{margin:0 0 4px;font-size:13px;color:var(--accent)}
+.confirm pre{margin:6px 0 10px;white-space:pre-wrap;font:12.5px/1.45 Consolas,monospace;background:var(--panel2);padding:8px 10px;border-radius:9px;max-height:160px;overflow:auto}
+.btns{display:flex;gap:8px}
+.btn{padding:6px 16px;border-radius:999px;background:var(--panel2);font-weight:600;font-size:13px}
+.btn:hover{filter:brightness(1.2)}
+.btn.primary{background:var(--accent);color:#000}
+.btn.danger{background:rgba(255,69,58,.18);color:var(--red)}
+.confirm.done{opacity:.6;border-color:var(--line)} .confirm.done .btns{display:none}
+div.filecard{display:flex;align-items:center;gap:10px;margin:0 0 12px;padding:10px 12px;border:1px solid var(--line);border-radius:12px;background:var(--panel,#1c1c1f);max-width:92%}
+div.filecard b{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:600}
+div.filecard a,div.filecard button{font:inherit;font-size:12px;color:inherit;background:transparent;border:1px solid var(--line);border-radius:999px;padding:4px 10px;cursor:pointer;text-decoration:none}
+img.shot{max-width:92%;border-radius:12px;border:1px solid var(--line);margin:0 0 12px;display:block}
+.typing{display:inline-flex;gap:4px;padding:10px 14px}
+.typing i{width:6px;height:6px;border-radius:50%;background:var(--dim);animation:b 1.2s infinite}
+.typing i:nth-child(2){animation-delay:.15s}.typing i:nth-child(3){animation-delay:.3s}
+@keyframes b{40%{transform:translateY(-4px);opacity:1}0%,80%,100%{opacity:.4}}
+#empty{text-align:center;color:var(--dim);margin:3vh 6px 0}
+#empty img{width:56px;height:56px;border-radius:15px;margin-bottom:10px}
+#empty h2{color:var(--text);margin:0 0 4px;font-size:18px}
+.chips{display:flex;flex-wrap:wrap;gap:6px;justify-content:center;margin-top:14px}
+.chip{padding:6px 11px;border-radius:999px;border:1px solid var(--line);background:var(--panel);font-size:13px}
+.chip:hover{border-color:var(--accent);color:var(--accent)}
+footer{padding:6px 10px 10px;background:linear-gradient(transparent,var(--bg) 30%)}
+#files{display:flex;gap:6px;flex-wrap:wrap;margin:0 4px 6px}
+#files span{background:var(--panel2);border-radius:999px;padding:3px 6px 3px 11px;font-size:12px;display:inline-flex;gap:6px;align-items:center;max-width:100%}
+#files span b{cursor:pointer;color:var(--dim)}
+.compose{display:flex;align-items:flex-end;gap:6px;background:var(--panel);border:1px solid var(--line);border-radius:22px;padding:5px 6px 5px 6px}
+.compose:focus-within{border-color:var(--accent)}
+textarea{flex:1;resize:none;border:0;outline:0;background:none;color:var(--text);font:inherit;padding:8px 6px;max-height:140px;min-height:36px}
+#send{width:36px;height:36px;border-radius:50%;background:var(--accent);color:#000;display:grid;place-items:center;flex:none}
+#send.stop{background:var(--red);color:#fff}
+#send:disabled{opacity:.4;cursor:default}
+.hint{color:var(--dim);font-size:11px;text-align:center;margin-top:5px}
+#drop{position:fixed;inset:8px;border:2px dashed var(--accent);border-radius:18px;background:rgba(11,11,13,.86);display:none;place-items:center;text-align:center;font-size:16px;font-weight:600;z-index:50;pointer-events:none;color:var(--accent)}
+body.dragging #drop{display:grid}
+#files .quick{background:var(--accent);color:#000;border-radius:999px;padding:3px 11px;font-size:12px;font-weight:600;padding-right:11px}
+#files .up{opacity:.6}
+.rem{margin:0 0 12px;padding:9px 13px;border-radius:var(--r);background:rgba(255,159,10,.14);border:1px solid var(--accent)}
+dialog{border:1px solid var(--line);border-radius:18px;background:var(--panel);color:var(--text);padding:0;width:min(440px,94vw)}
+dialog::backdrop{background:rgba(0,0,0,.6)}
+dialog form{padding:18px;display:grid;grid-template-columns:minmax(0,1fr);gap:12px}
+dialog h3{margin:0;font-size:16px}
+label{display:grid;grid-template-columns:minmax(0,1fr);gap:4px;font-size:12.5px;color:var(--dim)}
+input,select{width:100%;min-width:0;background:var(--panel2);border:1px solid var(--line);color:var(--text);border-radius:10px;padding:8px 10px;font:inherit;outline:0}
+input:focus,select:focus{border-color:var(--accent)}
+.small{font-size:12px;color:var(--dim)} .warn{color:var(--yellow)}
+#testres{font-size:12.5px;min-height:18px}
+.row{display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap}
+</style>
+</head>
+<body>
+<header>
+  <img src="/icon.png" alt="">
+  <h1>Tobi <span class="small"><span id="dot" class="dot"></span><span id="stat">ready</span></span></h1>
+  <button class="icon" id="bNew" title="New chat" aria-label="New chat"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg></button>
+  <button class="icon" id="bSet" title="Settings" aria-label="Settings"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg></button>
+</header>
+
+<main id="log" aria-live="polite">
+  <div id="empty">
+    <img src="/icon.png" alt="">
+    <h2>Hi, I'm Tobi</h2>
+    <div>Chat with me or give me a command. Drop files here and I'll get to work.</div>
+    <div class="chips" id="chips"></div>
+  </div>
+</main>
+<div id="drop">Drop files for Tobi</div>
+
+<footer>
+  <div id="files"></div>
+  <div class="compose">
+    <button class="icon" id="bAttach" title="Attach a file" aria-label="Attach a file"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.5 12.5 21a5.5 5.5 0 0 1-8-8L13 4.5a3.7 3.7 0 0 1 5.3 5.3L9.8 18.3a1.8 1.8 0 0 1-2.6-2.6l7.7-7.7"/></svg></button>
+    <textarea id="in" rows="1" placeholder="Message Tobi…" autofocus></textarea>
+    <button id="send" title="Send" aria-label="Send"><svg id="sendIco" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5M5 12l7-7 7 7"/></svg></button>
+  </div>
+  <div class="hint">Tobi can open apps, play music and anime, and change files. He asks before risky actions.</div>
+</footer>
+
+<dialog id="dlg">
+  <form method="dialog" id="form">
+    <h3>Tobi settings</h3>
+    <label>AI provider
+      <select id="fProv"></select>
+    </label>
+    <label>Model <input id="fModel" autocomplete="off" spellcheck="false"></label>
+    <label>API key <span class="small" id="keyHelp"></span>
+      <input id="fKey" type="password" autocomplete="off" spellcheck="false">
+    </label>
+    <label>API address <span class="small">(leave as is unless you use a proxy or a local server)</span>
+      <input id="fBase" autocomplete="off" spellcheck="false">
+    </label>
+    <label>Anime site <span class="small">(where "Play Naruto" searches)</span>
+      <input id="fAnime" autocomplete="off" spellcheck="false" placeholder="https://animesalt.cx">
+    </label>
+    <label>Browser for the humanizer and anime <span class="small" id="brHelp"></span>
+      <select id="fBrowser"></select>
+    </label>
+    <label>Document review after humanizing
+      <select id="fReview">
+        <option value="auto">Claude first (claude.ai / Claude tool), then my AI provider (e.g. ChatGPT)</option>
+        <option value="tobi">My AI provider only (e.g. ChatGPT): fastest</option>
+      </select>
+    </label>
+    <label>Approvals
+      <select id="fConfirm">
+        <option value="ask">Ask me before commands, deleting and stopping programs (recommended)</option>
+        <option value="auto">Never ask (the agent acts on its own)</option>
+      </select>
+    </label>
+    <div id="testres"></div>
+    <div class="row">
+      <button type="button" class="btn" id="bTest">Test connection</button>
+      <button type="button" class="btn" id="bClose">Close</button>
+      <button type="button" class="btn primary" id="bSave">Save</button>
+    </div>
+  </form>
+</dialog>
+
+<script>
+"use strict";
+const $ = id => document.getElementById(id);
+const log = $("log"), input = $("in");
+let busy = false, thinking = null, attached = [], S = null, tools = {}, es = null, lastId = 0;
+
+const esc = s => String(s).replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+function md(src){
+  const blocks = [];
+  let t = esc(src).replace(/```(?:\w+)?\n?([\s\S]*?)```/g, (_, c) => { blocks.push(c.replace(/\n$/,"")); return "\u0000" + (blocks.length-1) + "\u0000"; });
+  t = t.replace(/`([^`\n]+)`/g, "<code>$1</code>")
+       .replace(/\*\*([^*\n]+)\*\*/g, "<b>$1</b>")
+       .replace(/\[([^\]\n]+)\]\((https?:\/\/[^)\s]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>');
+  const out = []; let list = false;
+  for (const line of t.split("\n")) {
+    const m = line.match(/^\s*[-*•]\s+(.*)/);
+    if (m) { if (!list) { out.push("<ul>"); list = true; } out.push("<li>" + m[1] + "</li>"); continue; }
+    if (list) { out.push("</ul>"); list = false; }
+    out.push(line.trim() ? "<p>" + line + "</p>" : "");
+  }
+  if (list) out.push("</ul>");
+  return out.join("").replace(/\u0000(\d+)\u0000/g, (_, i) => "<pre><code>" + blocks[+i] + "</code></pre>");
+}
+
+function add(el){ $("empty")?.remove(); clearThinking(); log.appendChild(el); log.scrollTop = log.scrollHeight; return el; }
+function bubble(cls, html, isHtml){ const d = document.createElement("div"); d.className = "msg " + cls; if (isHtml) d.innerHTML = html; else d.textContent = html; return add(d); }
+function showThinking(){ if (thinking) return; const d = document.createElement("div"); d.className = "msg bot typing"; d.innerHTML = "<i></i><i></i><i></i>"; thinking = d; log.appendChild(d); log.scrollTop = log.scrollHeight; }
+function clearThinking(){ thinking?.remove(); thinking = null; }
+
+function toolCard(id, name, args, state, result){
+  let d = tools[id];
+  if (!d) {
+    d = document.createElement("details"); d.className = "tool run";
+    d.innerHTML = '<summary><span class="st"></span><b></b><span class="args"></span></summary><pre></pre>';
+    d.querySelector("b").textContent = name.replace(/_/g, " ");
+    tools[id] = d; add(d);
+  }
+  d.querySelector(".args").textContent = args || "";
+  if (state) { d.className = "tool " + state; }
+  if (result != null) d.querySelector("pre").textContent = result;
+  return d;
+}
+
+function setBusy(b){
+  busy = b;
+  $("dot").className = "dot" + (b ? " busy" : "");
+  $("stat").textContent = b ? "working…" : "ready";
+  $("send").classList.toggle("stop", b);
+  $("sendIco").innerHTML = b ? '<rect x="6" y="6" width="12" height="12" rx="2" fill="currentColor" stroke="none"/>' : '<path d="M12 19V5M5 12l7-7 7 7"/>';
+  $("send").title = b ? "Stop" : "Send";
+  if (b) showThinking(); else clearThinking();
+}
+
+function confirmCard(e, done, ok){
+  let d = document.getElementById("c" + e.id);
+  if (!d) {
+    d = document.createElement("div"); d.className = "confirm"; d.id = "c" + e.id;
+    d.innerHTML = '<h4></h4><pre></pre><div class="btns"><button class="btn primary">Allow</button><button class="btn danger">Deny</button></div>';
+    d.querySelector("h4").textContent = (e.labels ? "" : "Approve: ") + e.title; if (e.labels) d.dataset.lab = JSON.stringify(e.labels);
+    d.querySelector("pre").textContent = e.detail;
+    const [a, n] = d.querySelectorAll("button");
+    if (e.labels && e.labels.length === 2) { a.textContent = e.labels[0]; n.textContent = e.labels[1]; }
+    a.onclick = () => api("/api/confirm", {id: e.id, approve: true});
+    n.onclick = () => api("/api/confirm", {id: e.id, approve: false});
+    add(d);
+  }
+  if (done) { d.classList.add("done");
+    const lab = d.dataset.lab ? JSON.parse(d.dataset.lab) : null;
+    d.querySelector("h4").textContent = lab ? e.title + " - " + (ok ? lab[0] : lab[1]) : (ok ? "Allowed: " : "Denied: ") + e.title; }
+}
+
+function handle(e){
+  lastId = Math.max(lastId, e.seq || 0);
+  switch (e.type) {
+    case "user": bubble("user", e.text); break;
+    case "thinking": showThinking(); break;
+    case "assistant": bubble("bot", md(e.text), true); if (busy) showThinking(); break;
+    case "tool_start": toolCard(e.id, e.name, e.args, "run", ""); if (busy) showThinking(); break;
+    case "tool_log": { const d = tools[e.id]; if (d) { const p = d.querySelector("pre"); p.textContent += (p.textContent ? "\n" : "") + e.text; p.scrollTop = p.scrollHeight; d.open = true; } break; }
+    case "tool_end": { const d = tools[e.id]; if (d) { d.className = "tool " + (e.ok ? "ok" : "bad"); d.querySelector("pre").textContent = e.result; if (e.ok) d.open = false; } break; }
+    case "confirm": confirmCard(e, false); break;
+    case "confirm_done": confirmCard({id: e.id, title: document.querySelector("#c" + e.id + " h4")?.textContent.replace(/^Approve: /, "") || "", detail: ""}, true, e.approved); break;
+    case "image": { const i = document.createElement("img"); i.className = "shot"; i.src = e.url; i.alt = "Screenshot"; i.onload = () => log.scrollTop = log.scrollHeight; add(i); if (busy) showThinking(); break; }
+    case "file": { const d = document.createElement("div"); d.className = "filecard";
+      d.innerHTML = '<span>📄</span><b></b><button>Open</button><a download>Download</a>';
+      d.querySelector("b").textContent = e.name; d.querySelector("a").href = e.url;
+      d.querySelector("button").onclick = () => api("/api/open-file", {name: e.name});
+      add(d); if (busy) showThinking(); break; }
+    case "status": setBusy(!!e.busy); break;
+    case "error": clearThinking(); { const d = document.createElement("div"); d.className = "err"; d.textContent = e.text; add(d); if (/API key|model|Settings/i.test(e.text)) openSettings(); } break;
+    case "notice": clearThinking(); { const d = document.createElement("div"); d.className = "note"; d.textContent = e.text; add(d); } break;
+    case "cleared": log.innerHTML = ""; tools = {}; showEmpty(); break;
+    case "attach": for (const p of (e.paths || [])) if (!attached.includes(p)) attached.push(p); renderFiles(); input.focus(); break;
+    case "reminder": { const d = document.createElement("div"); d.className = "rem"; d.textContent = "⏰ Reminder: " + e.text; add(d); break; }
+    case "ui": if (e.action === "settings") openSettings(); break;
+    case "bye": $("dot").className = "dot off"; $("stat").textContent = "asleep"; es?.close(); break;
+  }
+}
+
+async function api(path, body){
+  const r = await fetch(path, {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(body || {})});
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(j.error || r.statusText);
+  return j;
+}
+
+function connect(){
+  es?.close();
+  es = new EventSource("/api/events?after=" + lastId);
+  es.onmessage = m => { try { handle(JSON.parse(m.data)); } catch (_) {} };
+  es.onerror = () => { $("dot").className = "dot off"; $("stat").textContent = "reconnecting…"; };
+  es.onopen = () => { if (!busy) { $("dot").className = "dot"; $("stat").textContent = "ready"; } };
+}
+
+function showEmpty(){
+  if (document.getElementById("empty")) return;
+  const d = document.createElement("div"); d.id = "empty";
+  d.innerHTML = '<img src="/icon.png" alt=""><h2>Hi, I\'m Tobi</h2><div>Chat with me or give me a command. Drop files here and I\'ll get to work.</div><div class="chips" id="chips"></div>';
+  log.appendChild(d); fillChips();
+}
+const SUGGEST = [
+  ["🎵 Play some music", "Play some relaxing music"],
+  ["🍥 Play Naruto", "Play Naruto"],
+  ["🍜 I'm eating, play something", "I am eating, play something interesting"],
+  ["📄 Humanize a file", "Humanize this file"],
+  ["⛅ Weather", "What's the weather like today? Ask me my city if you do not know it."],
+  ["⏰ Remind me in 20 min", "Remind me in 20 minutes to take a break"],
+  ["📋 What did you humanize?", "What have you humanized so far?"],
+  ["🧹 Tidy my Downloads", "Tidy my Downloads folder"],
+];
+function fillChips(){
+  const c = $("chips"); if (!c) return;
+  c.innerHTML = "";
+  for (const [label, text] of SUGGEST) { const b = document.createElement("button"); b.className = "chip"; b.textContent = label; b.onclick = () => send(text); c.appendChild(b); }
+}
+
+async function send(text){
+  text = (text ?? input.value).trim();
+  if (!text && !attached.length) return;
+  if (busy) return;
+  const full = (attached.map(p => "[Attached file: " + p + "]").join("\n") + "\n" + text).trim();
+  input.value = ""; autosize(); attached = []; renderFiles();
+  try { await api("/api/send", {text: full}); } catch (e) { const d = document.createElement("div"); d.className = "err"; d.textContent = e.message; add(d); }
+}
+
+function renderFiles(){
+  const f = $("files"); f.innerHTML = "";
+  attached.forEach((p, i) => { const s = document.createElement("span"); s.textContent = p.split(/[\\/]/).pop(); s.title = p; const x = document.createElement("b"); x.textContent = "✕"; x.onclick = () => { attached.splice(i, 1); renderFiles(); }; s.appendChild(x); f.appendChild(s); });
+  const doc = attached.find(p => /\.docx$/i.test(p));
+  if (doc && !busy) { const q = document.createElement("span"); q.className = "quick"; q.textContent = "Humanize this file"; q.style.cursor = "pointer"; q.onclick = () => send("Humanize this file"); f.appendChild(q); }
+}
+const uploading = new Set();
+async function uploadFile(file){
+  const tag = document.createElement("span"); tag.className = "up"; tag.textContent = "Uploading " + file.name + "…"; $("files").appendChild(tag);
+  try {
+    const r = await fetch("/api/upload", {method: "POST", headers: {"Content-Type": "application/octet-stream", "X-Filename": encodeURIComponent(file.name)}, body: file});
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(j.error || r.statusText);
+    attached.push(j.path);
+  } catch (e) { const d = document.createElement("div"); d.className = "err"; d.textContent = "Could not take " + file.name + ": " + e.message; add(d); }
+  tag.remove(); renderFiles();
+}
+// drag and drop anywhere in the window
+let dragDepth = 0;
+const hasFiles = e => [...(e.dataTransfer?.types || [])].includes("Files");
+addEventListener("dragenter", e => { if (hasFiles(e)) { e.preventDefault(); dragDepth++; document.body.classList.add("dragging"); } });
+addEventListener("dragover", e => { if (hasFiles(e)) e.preventDefault(); });
+addEventListener("dragleave", e => { if (hasFiles(e) && --dragDepth <= 0) { dragDepth = 0; document.body.classList.remove("dragging"); } });
+addEventListener("drop", e => { if (!hasFiles(e)) return; e.preventDefault(); dragDepth = 0; document.body.classList.remove("dragging"); [...e.dataTransfer.files].forEach(uploadFile); input.focus(); });
+addEventListener("paste", e => { const fs = [...(e.clipboardData?.files || [])]; if (fs.length) { e.preventDefault(); fs.forEach(uploadFile); } });
+function autosize(){ input.style.height = "auto"; input.style.height = Math.min(input.scrollHeight, 140) + "px"; }
+
+$("send").onclick = () => busy ? api("/api/stop") : send();
+input.addEventListener("keydown", e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); busy ? null : send(); } });
+input.addEventListener("input", autosize);
+$("bNew").onclick = () => { if (!busy || confirm("Stop the current task and start a new chat?")) api("/api/new"); };
+$("bAttach").onclick = async () => {
+  $("bAttach").disabled = true;
+  try { const r = await api("/api/pick-file"); if (r.path && !r.path.startsWith("The user closed") && !r.path.startsWith("Could not")) { attached.push(r.path); renderFiles(); } } finally { $("bAttach").disabled = false; input.focus(); }
+};
+
+// ---- settings
+function fillProv(){
+  const sel = $("fProv"); sel.innerHTML = "";
+  for (const [k, v] of Object.entries(S.providers)) { const o = document.createElement("option"); o.value = k; o.textContent = v.label; sel.appendChild(o); }
+  sel.value = S.provider;
+}
+function provChanged(keepValues){
+  const p = S.providers[$("fProv").value];
+  $("fModel").placeholder = p.model || "model name";
+  $("fBase").placeholder = p.base_url || "https://…/v1";
+  $("keyHelp").textContent = p.needs_key ? "· " + p.key_help : "· optional";
+  if (!keepValues) { $("fModel").value = ""; $("fBase").value = ""; }
+}
+function fillBrowsers(){
+  const b = S.browsers || {installed: {}, default: ""}, sel = $("fBrowser");
+  sel.innerHTML = "";
+  const add = (v, l) => { const o = document.createElement("option"); o.value = v; o.textContent = l; sel.appendChild(o); };
+  add("auto", "Automatic" + (b.default ? " (your default: " + b.default + ")" : " (your default browser, else the first one found)"));
+  Object.keys(b.installed).forEach(k => add(k, b.installed[k]));
+  sel.value = S.browser || "auto"; if (sel.value !== (S.browser || "auto")) sel.value = "auto";
+  $("brHelp").textContent = Object.keys(b.installed).length ? "· found: " + Object.values(b.installed).join(", ") : "· none found; install Chrome, Edge or Brave";
+}
+function openSettings(){
+  if (!S) return;
+  fillProv(); $("fModel").value = S.model || ""; $("fBase").value = S.base_url || "";
+  $("fKey").value = ""; $("fKey").placeholder = S.has_key ? "•••••••• saved (type to replace)" : "paste your API key";
+  fillBrowsers(); $("fReview").value = S.review_engine || "auto";
+  $("fConfirm").value = S.confirm_mode; $("fAnime").value = S.anime_site || ""; provChanged(true); $("testres").textContent = "";
+  if (!$("dlg").open) $("dlg").showModal();
+}
+async function saveSettings(){
+  const body = {provider: $("fProv").value, model: $("fModel").value, base_url: $("fBase").value, api_key: $("fKey").value, confirm_mode: $("fConfirm").value, browser: $("fBrowser").value, review_engine: $("fReview").value, anime_site: $("fAnime").value};
+  const r = await api("/api/settings", body); S = r.settings; return r;
+}
+$("bSet").onclick = openSettings;
+$("fProv").onchange = () => provChanged(false);
+$("bClose").onclick = () => $("dlg").close();
+$("bSave").onclick = async () => { try { await saveSettings(); $("dlg").close(); } catch (e) { $("testres").textContent = e.message; } };
+$("bTest").onclick = async () => {
+  const t = $("testres"); t.className = ""; t.textContent = "Testing…";
+  try { await saveSettings(); const r = await api("/api/test"); t.textContent = r.ok ? "✓ Connected (" + r.ms + " ms)" : "✗ " + r.error; t.style.color = r.ok ? "var(--green)" : "var(--red)"; }
+  catch (e) { t.textContent = "✗ " + e.message; t.style.color = "var(--red)"; }
+};
+
+// ---- start
+(async function start(){
+  fillChips();
+  try {
+    const st = await (await fetch("/api/state")).json();
+    S = st.settings; lastId = st.last_event;
+    for (const it of st.history) {
+      if (it.kind === "user") bubble("user", it.text);
+      else if (it.kind === "assistant") bubble("bot", md(it.text), true);
+      else if (it.kind === "tool") toolCard(it.id, it.name, it.args, it.ok ? "ok" : "bad", it.result);
+    }
+    for (const c of st.pending) confirmCard(c, false);
+    for (const p of (st.attach || [])) if (!attached.includes(p)) attached.push(p);
+    renderFiles();
+    setBusy(st.busy);
+    connect();
+    if (!S.configured || location.hash === "#settings") openSettings();
+  } catch (e) {
+    bubble("bot", "I could not reach my engine. Open me again from WindyLand.");
+  }
+  input.focus();
+})();
+</script>
+</body>
+</html>

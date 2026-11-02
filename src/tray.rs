@@ -15,6 +15,7 @@ use crate::gfx::make_tray_icon;
 
 const ID_SETTINGS: u32 = 1;
 const ID_TOUR: u32 = 2;
+const ID_AGENT: u32 = 3;
 const ID_UPDATES: u32 = 6;
 const ID_ABOUT: u32 = 8;
 const ID_EXIT: u32 = 9;
@@ -96,6 +97,7 @@ pub fn show_menu() {
         let item = |id: u32, text: PCWSTR| {
             let _ = AppendMenuW(menu, MF_STRING, id as usize, text);
         };
+        item(ID_AGENT, w!("Chat with Tobi"));
         item(ID_SETTINGS, w!("Settings"));
         let _ = SetMenuDefaultItem(menu, ID_SETTINGS, 0);
         item(ID_TOUR, w!("Welcome tour"));
@@ -126,6 +128,9 @@ pub fn show_menu() {
 
 pub fn command(app: &mut App, id: u32) {
     match id {
+        ID_AGENT => {
+            let _ = crate::modules::agent::open_agent(app.hwnd);
+        }
         ID_SETTINGS => app.open_settings(),
         ID_TOUR => app.start_onboarding(),
         ID_UPDATES => {

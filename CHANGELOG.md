@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- **Tobi, an optional AI assistant** (new "Tobi" tab with a chat inside the notch, `src/modules/agent.rs`, and a Python
+  agent in `agent/`): talks, opens programs, plays music and anime, humanizes Word files through a browser, keeps notes and
+  reminders, and reads a knowledge folder. Works with OpenAI, Claude, Gemini, OpenRouter, Ollama or any OpenAI-compatible
+  server; asks before risky actions. A separate NSIS installer (`installer/WindyLandSetup.nsi`) sets it up. See
+  `docs/AI_AGENT.md`. The notch builds and runs without it.
 - Preparing for code signing (SignPath Foundation), so Windows 11's Smart App
   Control stops blocking WindyLand once releases are signed:
   - Releases are built by GitHub Actions from the version tag

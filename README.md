@@ -49,6 +49,12 @@ Notifications, clipboard history and the mic and camera dots are read
 locally, and notifications and clipboard history are off until you turn them
 on. See the [privacy policy](PRIVACY.md).
 
+## Tobi, your AI assistant (optional)
+
+The **Tobi** tab is a chat inside the notch. Ask him to open programs, play music or anime, set reminders or humanize a
+Word file. It works with OpenAI, Claude, Gemini, OpenRouter, Ollama or any OpenAI-compatible server and asks before
+anything risky. See [docs/AI_AGENT.md](docs/AI_AGENT.md).
+
 ## Install
 
 Download `WindyLandSetup-<version>.exe` from

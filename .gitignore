@@ -7,3 +7,4 @@ selftest.txt
 .vscode/
 *.iml
 __pycache__/
+agent/venv/
