@@ -59,6 +59,40 @@ def make(data, run, read_raw, wallpaper, fake_windows, rounded_mask, font):
             x += tw + 48
         return im.convert("RGB")
 
+    def page_chips(top, title, sub, chips):
+        """A finished image on top, then the title, a line of text and
+        chips that wrap onto as many rows as they need."""
+        f = font(22, "semibold")
+        probe = ImageDraw.Draw(top)
+        rows, row, x = [], [], PAD
+        for c in chips:
+            tw = probe.textlength(c, font=f) + 36
+            if x + tw > W - PAD and row:
+                rows.append(row)
+                row, x = [], PAD
+            row.append(c)
+            x += tw + 12
+        if row:
+            rows.append(row)
+        h = top.height + 110 + 50 + len(rows) * 54 + 30
+        im = Image.new("RGBA", (W, h), BG + (255,))
+        im.alpha_composite(top, (0, 0))
+        d = ImageDraw.Draw(im)
+        y = top.height + 6
+        d.text((PAD + 4, y), title, font=font(54, "bold"), fill=TEXT)
+        y += 72
+        d.text((PAD + 4, y), sub, font=font(28), fill=DIM)
+        y += 56
+        for row in rows:
+            x = PAD
+            for c in row:
+                tw = d.textlength(c, font=f)
+                d.rounded_rectangle((x, y, x + tw + 36, y + 42), 21, fill=CHIP)
+                d.text((x + 18, y + 21), c, font=f, fill=TEXT, anchor="lm")
+                x += tw + 48
+            y += 54
+        return im.convert("RGB")
+
     def single(name, raw, title, sub, chips, min_h=420):
         """One render at the top centre of a card."""
         img = shot(raw)
@@ -68,13 +102,68 @@ def make(data, run, read_raw, wallpaper, fake_windows, rounded_mask, font):
         page(c, m, title, sub, chips).save(IMAGES / f"{name}.png")
         print("  ", name)
 
-    # Hero: lyrics view, big title.
-    img = shot("panel_lyrics")
-    c, m = card(560)
-    c.alpha_composite(img, ((c.width - img.width) // 2, 0))
-    hero = page(c, m, "WindyLand", "A living notch for Windows. Free and open source.",
-                ["Music + lyrics", "Notifications", "Timer", "Pomodoro", "To-do", "Water", "File shelf", "Clipboard"])
-    hero.save(IMAGES / "hero.png")
+    # Hero: a collage, so the first image shows how much is in it.
+    tiles = [
+        ("panel_lyrics", "Music + synced lyrics"),
+        ("panel_agents", "AI agents: Hermes, Claude Code, Codex"),
+        ("panel_tools_color", "Color picker and tools"),
+        ("panel_monitor", "System monitor"),
+        ("panel_clipboard", "Clipboard: click to paste"),
+    ]
+    cw = W - 2 * PAD
+    gap = 22
+    big_w = (cw - gap) * 58 // 100
+    side_w = cw - gap - big_w
+    col2 = (cw - gap) // 2
+
+    def tile(raw, label, w, h, seed):
+        """A desktop tile with the panel dropping from its top edge."""
+        wp = wallpaper(w, h, seed)
+        img = shot(raw)
+        scale = min((w - 36) / img.width, (h - 64) / img.height, 1.0)
+        img = img.resize((round(img.width * scale), round(img.height * scale)), Image.LANCZOS)
+        wp.alpha_composite(img, ((w - img.width) // 2, 0))
+        d = ImageDraw.Draw(wp)
+        f = font(21, "semibold")
+        tw = d.textlength(label, font=f)
+        d.rounded_rectangle((16, h - 52, 16 + tw + 30, h - 14), 19, fill=(0, 0, 0, 150))
+        d.text((31, h - 33), label, font=f, fill=TEXT, anchor="lm")
+        return wp
+
+    # Row 1: lyrics (big) and two alerts + the closed notch on the side.
+    big_h = 420
+    row1 = tile(tiles[0][0], tiles[0][1], big_w, big_h, 0.0)
+    side = wallpaper(side_w, big_h, 1.3)
+    y = 0
+    side_imgs = [shot(r) for r in ["collapsed_full_music", "toast_agent", "toast_notification"]]
+    fit = min((side_w - 30) / max(i.width for i in side_imgs), (big_h - 70) / sum(i.height + 6 for i in side_imgs), 1.0)
+    for img in side_imgs:
+        s = fit
+        img = img.resize((round(img.width * s), round(img.height * s)), Image.LANCZOS)
+        side.alpha_composite(img, ((side_w - img.width) // 2, y))
+        y += img.height + 6
+    d = ImageDraw.Draw(side)
+    f = font(21, "semibold")
+    label = "Alerts drop out of the notch"
+    tw = d.textlength(label, font=f)
+    d.rounded_rectangle((16, big_h - 52, 16 + tw + 30, big_h - 14), 19, fill=(0, 0, 0, 150))
+    d.text((31, big_h - 33), label, font=f, fill=TEXT, anchor="lm")
+    small_h = 330
+    rows = [tiles[1:3], tiles[3:5]]
+    total_h = big_h + 2 * (small_h + gap)
+    collage = Image.new("RGBA", (cw, total_h), (0, 0, 0, 0))
+    collage.paste(row1, (0, 0), rounded_mask(big_w, big_h, 22))
+    collage.paste(side, (big_w + gap, 0), rounded_mask(side_w, big_h, 22))
+    for r, row in enumerate(rows):
+        for k, (raw, label) in enumerate(row):
+            t = tile(raw, label, col2, small_h, 0.4 + r * 0.9 + k * 0.33)
+            collage.paste(t, (k * (col2 + gap), big_h + gap + r * (small_h + gap)), rounded_mask(col2, small_h, 22))
+    hero = Image.new("RGBA", (W, total_h + 2 * PAD), BG + (255,))
+    hero.alpha_composite(collage, (PAD, PAD))
+    page_img = page_chips(hero, "WindyLand", "A Dynamic Island for Windows: music, AI agents, tools, reminders and more. Free and open source.",
+                          ["Music + lyrics", "AI agents", "Color picker", "Calculator", "QR codes", "Converter", "System monitor", "Clipboard",
+                           "Screenshots", "File shelf", "Notifications", "Prayer times", "Timer", "Pomodoro", "To-do", "Water", "8 mascots"])
+    page_img.save(IMAGES / "hero.png")
     print("   hero")
 
     single("music", "panel_music", "Now playing", "Album art, seek bar and controls for whatever is playing.", ["Spotify", "Browsers", "Media Player", "Any app in the Windows media overlay"])
@@ -127,7 +216,7 @@ def make(data, run, read_raw, wallpaper, fake_windows, rounded_mask, font):
     print("   styles")
 
     # Alerts: toasts in two columns.
-    toasts = ["toast_notification", "toast_timer", "toast_water", "toast_todo", "toast_pomodoro", "toast_charging", "toast_volume", "toast_mic", "toast_caps", "toast_bt"]
+    toasts = ["toast_notification", "toast_agent", "toast_timer", "toast_water", "toast_todo", "toast_pomodoro", "toast_charging", "toast_volume", "toast_mic", "toast_caps", "toast_bt", "toast_agent_done"]
     imgs = [shot(t) for t in toasts]
     row_h = max(i.height for i in imgs) + 40
     rows = (len(imgs) + 1) // 2

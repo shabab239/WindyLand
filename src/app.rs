@@ -4804,6 +4804,8 @@ pub fn render_docs(dir: &std::path::Path) -> String {
             ("toast_caps", Toast::new("caps", glyph::CAPS, col::ACCENT, "Caps Lock", "On")),
             ("toast_bt", Toast::new("bt", glyph::HEADPHONE, col::BLUE, "Earbuds", "Connected")),
             ("toast_lang", Toast::new("lang", glyph::KEYBOARD, col::BLUE, "Bangla (Bangladesh)", "Keyboard language").right("BN")),
+            ("toast_agent", Toast::new("agent", crate::modules::agents::ICON, col::ACCENT, "Hermes needs you", "desktop \u{00B7} Wants your OK to run a command")),
+            ("toast_agent_done", Toast::new("agent", crate::modules::agents::ICON, col::GREEN, "Claude Code finished", "WindyLand \u{00B7} took 4m 12s")),
             (
                 "toast_notification",
                 Toast::new("notif", glyph::BELL, col::GREEN, "Nadia", "Are we still on for 7? I'll bring the slides")
