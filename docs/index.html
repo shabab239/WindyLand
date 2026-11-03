@@ -1,0 +1,226 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>WindyLand: a Dynamic Island for Windows</title>
+<meta name="description" content="Free, open-source Dynamic Island style notch for Windows 10 and 11. Music with synced lyrics, AI agent status, color picker, calculator, clipboard history, reminders and more.">
+<meta property="og:title" content="WindyLand: a Dynamic Island for Windows">
+<meta property="og:description" content="Free and open source. Music with lyrics, AI agents, tools, clipboard, reminders and more, in a small notch at the edge of your screen.">
+<meta property="og:image" content="https://shabab239.github.io/WindyLand/images/hero.png">
+<meta property="og:url" content="https://shabab239.github.io/WindyLand/">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect x='3' y='10' width='26' height='12' rx='6' fill='%23111'/><circle cx='22' cy='16' r='3' fill='%23ff9f1c'/></svg>">
+<style>
+  :root {
+    --bg: #0d0f14;
+    --card: #161922;
+    --line: #262a36;
+    --text: #f3f4f7;
+    --dim: #a0a5b4;
+    --accent: #ff9f1c;
+    --accent-ink: #1b1204;
+  }
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font: 16px/1.6 "Segoe UI Variable", "Segoe UI", system-ui, -apple-system, sans-serif;
+  }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  img { max-width: 100%; display: block; }
+  .wrap { max-width: 1100px; margin: 0 auto; padding: 0 22px; }
+
+  nav { display: flex; align-items: center; justify-content: space-between; padding: 18px 0; }
+  .brand { display: flex; align-items: center; gap: 10px; font-weight: 700; font-size: 18px; color: var(--text); }
+  .brand .pill { width: 34px; height: 14px; border-radius: 7px; background: #000; border: 1px solid #333; position: relative; }
+  .brand .pill::after { content: ""; position: absolute; right: 3px; top: 3px; width: 6px; height: 6px; border-radius: 50%; background: var(--accent); }
+  nav .links { display: flex; gap: 20px; font-size: 15px; }
+  nav .links a { color: var(--dim); }
+  nav .links a:hover { color: var(--text); text-decoration: none; }
+
+  header { text-align: center; padding: 40px 0 28px; }
+  h1 { font-size: clamp(34px, 6vw, 58px); line-height: 1.1; margin: 0 0 16px; letter-spacing: -0.02em; }
+  .lead { font-size: clamp(17px, 2.2vw, 20px); color: var(--dim); max-width: 720px; margin: 0 auto 30px; }
+
+  .dl { display: inline-flex; align-items: center; gap: 12px; background: var(--accent); color: var(--accent-ink);
+        font-weight: 700; font-size: 19px; padding: 16px 30px; border-radius: 14px; box-shadow: 0 8px 30px rgba(255, 159, 28, .25); }
+  .dl:hover { text-decoration: none; filter: brightness(1.06); }
+  .dl svg { width: 22px; height: 22px; }
+  .meta { color: var(--dim); font-size: 14px; margin-top: 12px; }
+  .meta a { color: var(--dim); text-decoration: underline; }
+
+  .hero { margin: 36px auto 0; border-radius: 18px; overflow: hidden; border: 1px solid var(--line); }
+
+  section { padding: 56px 0 8px; }
+  h2 { font-size: clamp(26px, 3.6vw, 36px); margin: 0 0 8px; letter-spacing: -0.01em; }
+  .sub { color: var(--dim); margin: 0 0 26px; }
+
+  .steps { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; counter-reset: s; }
+  .step { background: var(--card); border: 1px solid var(--line); border-radius: 16px; padding: 22px; }
+  .step::before { counter-increment: s; content: counter(s); display: inline-grid; place-items: center; width: 30px; height: 30px;
+                  border-radius: 50%; background: rgba(255, 159, 28, .14); color: var(--accent); font-weight: 700; margin-bottom: 10px; }
+  .step h3 { margin: 0 0 6px; font-size: 18px; }
+  .step p { margin: 0; color: var(--dim); font-size: 15px; }
+
+  .help { margin-top: 16px; background: var(--card); border: 1px solid var(--line); border-radius: 16px; }
+  .help summary { cursor: pointer; padding: 18px 22px; font-weight: 600; list-style: none; }
+  .help summary::-webkit-details-marker { display: none; }
+  .help summary::after { content: "+"; float: right; color: var(--dim); font-weight: 400; }
+  .help[open] summary::after { content: "\2212"; }
+  .help div { padding: 0 22px 18px; color: var(--dim); }
+  .help b { color: var(--text); }
+
+  .grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 18px; }
+  .feat { background: var(--card); border: 1px solid var(--line); border-radius: 16px; overflow: hidden; }
+  .feat img { width: 100%; height: auto; }
+  .feat .t { padding: 14px 18px 18px; }
+  .feat h3 { margin: 0 0 4px; font-size: 18px; }
+  .feat p { margin: 0; color: var(--dim); font-size: 15px; }
+
+  .more { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 22px; }
+  .chip { background: var(--card); border: 1px solid var(--line); border-radius: 999px; padding: 7px 15px; font-size: 14px; }
+
+  .demo { border-radius: 16px; overflow: hidden; border: 1px solid var(--line); max-width: 900px; margin: 0 auto; }
+
+  .privacy { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
+  .privacy div { background: var(--card); border: 1px solid var(--line); border-radius: 16px; padding: 20px; color: var(--dim); font-size: 15px; }
+  .privacy b { display: block; color: var(--text); font-size: 17px; margin-bottom: 4px; }
+
+  .cta { text-align: center; padding: 64px 0 40px; }
+  footer { border-top: 1px solid var(--line); color: var(--dim); font-size: 14px; padding: 22px 0 40px; }
+  footer .wrap { display: flex; flex-wrap: wrap; gap: 8px 22px; justify-content: space-between; }
+  footer a { color: var(--dim); }
+
+  @media (max-width: 760px) {
+    nav .links a.hide-sm { display: none; }
+    .steps, .grid, .privacy { grid-template-columns: 1fr; }
+    header { padding-top: 20px; }
+    .dl { width: 100%; justify-content: center; }
+  }
+</style>
+</head>
+<body>
+
+<div class="wrap">
+  <nav>
+    <a class="brand" href="#"><span class="pill"></span>WindyLand</a>
+    <div class="links">
+      <a class="hide-sm" href="#features">Features</a>
+      <a class="hide-sm" href="#install">Install</a>
+      <a href="https://github.com/shabab239/WindyLand/blob/main/docs/USER_GUIDE.md">Guide</a>
+      <a href="https://github.com/shabab239/WindyLand">GitHub</a>
+    </div>
+  </nav>
+
+  <header>
+    <h1>A Dynamic Island for Windows</h1>
+    <p class="lead">Music with synced lyrics, AI agent status, a color picker, calculator, clipboard history, reminders and more, in a small notch at the edge of your screen. Free and open source.</p>
+    <a class="dl" id="dl" href="https://github.com/shabab239/WindyLand/releases/latest">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/></svg>
+      <span id="dl-text">Download for Windows</span>
+    </a>
+    <div class="meta"><span id="dl-meta">Windows 10 and 11 · free · no admin rights needed</span> · <a href="https://github.com/shabab239/WindyLand/releases">all versions</a></div>
+    <img class="hero" src="images/hero.png" alt="WindyLand: music with lyrics, alerts, AI agents, tools, system monitor and clipboard" width="1600" height="1502">
+  </header>
+</div>
+
+<div class="wrap">
+  <section id="install">
+    <h2>Install in a minute</h2>
+    <p class="sub">The installer is about 3 MB. Later updates install with one click from the notch.</p>
+    <div class="steps">
+      <div class="step"><h3>Download</h3><p>Click the button above. The file is <code>WindyLandSetup-&lt;version&gt;.exe</code>.</p></div>
+      <div class="step"><h3>Run it</h3><p>If Windows shows a blue <b>Windows protected your PC</b> screen, click <b>More info</b>, then <b>Run anyway</b>.</p></div>
+      <div class="step"><h3>Pick a look</h3><p>A short welcome tour asks for a style and an edge. Hover the notch to open it, right-click it for settings.</p></div>
+    </div>
+
+    <details class="help">
+      <summary>Why does Windows warn me?</summary>
+      <div>WindyLand isn't code signed yet (a certificate costs money every year), so Windows doesn't know the publisher. The code is all <a href="https://github.com/shabab239/WindyLand">on GitHub</a>, and every installer is built by GitHub Actions from that code. In the browser, if the download is held back, choose <b>Keep</b> from the download's menu.</div>
+    </details>
+    <details class="help">
+      <summary>"Smart App Control blocked an app"?</summary>
+      <div>Windows 11's Smart App Control blocks every unsigned app, with no way to allow just one. The only way to install is to turn it off in <b>Windows Security &gt; App &amp; browser control</b>. On many Windows versions it can't be turned back on without resetting Windows, so decide carefully.</div>
+    </details>
+    <details class="help">
+      <summary>How do I uninstall it?</summary>
+      <div>Right-click the tray icon and choose <b>Uninstall WindyLand</b>, or use <b>Settings &gt; Apps</b> like any other app.</div>
+    </details>
+  </section>
+
+  <section id="features">
+    <h2>Much more than a notch</h2>
+    <p class="sub">Every panel is optional: hide the ones you don't need.</p>
+    <div class="grid">
+      <div class="feat"><img loading="lazy" src="images/lyrics.png" alt="Synced lyrics"><div class="t"><h3>Music + synced lyrics</h3><p>Spotify, browsers or any player. The current line lights up as it's sung.</p></div></div>
+      <div class="feat"><img loading="lazy" src="images/agents.png" alt="AI agents"><div class="t"><h3>AI agents</h3><p>See when Hermes, Claude Code or Codex is working, needs your OK, or is done.</p></div></div>
+      <div class="feat"><img loading="lazy" src="images/tools.png" alt="Color picker"><div class="t"><h3>Tools</h3><p>Color picker for anything on screen, calculator, QR codes, unit converter and time zones.</p></div></div>
+      <div class="feat"><img loading="lazy" src="images/clipboard.png" alt="Clipboard history"><div class="t"><h3>Clipboard history</h3><p>Click to paste, search, pin and snippets. Off until you turn it on.</p></div></div>
+      <div class="feat"><img loading="lazy" src="images/monitor.png" alt="System monitor"><div class="t"><h3>System monitor</h3><p>CPU, memory and network speed with a minute of history.</p></div></div>
+      <div class="feat"><img loading="lazy" src="images/notifications.png" alt="Windows notifications"><div class="t"><h3>Notifications</h3><p>Other apps' Windows notifications drop out of the notch, with their icon.</p></div></div>
+      <div class="feat"><img loading="lazy" src="images/todo.png" alt="To-do"><div class="t"><h3>To-do with reminders</h3><p>Jot a task, give it a time, and the notch taps you when it's due.</p></div></div>
+      <div class="feat"><img loading="lazy" src="images/prayer.png" alt="Prayer times"><div class="t"><h3>Prayer times</h3><p>Worked out on your PC for your city, with optional reminders.</p></div></div>
+    </div>
+    <div class="more">
+      <span class="chip">File shelf</span><span class="chip">Screenshots</span><span class="chip">Timer and stopwatch</span>
+      <span class="chip">Pomodoro</span><span class="chip">Water reminder</span><span class="chip">Volume, charging, Caps Lock</span>
+      <span class="chip">Bluetooth connects</span><span class="chip">Mic and camera dots</span><span class="chip">8 mascots</span>
+      <span class="chip">4 styles, any screen edge</span><span class="chip">Hides for full-screen games and movies</span>
+    </div>
+  </section>
+
+  <section>
+    <h2>See it move</h2>
+    <p class="sub">Styles, music and lyrics, every panel, alerts and settings.</p>
+    <div class="demo"><img loading="lazy" src="images/demo.gif" alt="WindyLand demo" width="900"></div>
+  </section>
+
+  <section>
+    <h2>Your data stays on your PC</h2>
+    <p class="sub">No account, no tracking. <a href="https://github.com/shabab239/WindyLand/blob/main/PRIVACY.md">Privacy policy</a></p>
+    <div class="privacy">
+      <div><b>Two network requests</b>Lyrics from LRCLIB and the update check on GitHub. Nothing else goes online.</div>
+      <div><b>Opt-in</b>Notifications and clipboard history stay off until you turn them on.</div>
+      <div><b>Open source</b>MIT licensed and written in Rust. Read every line on GitHub.</div>
+    </div>
+  </section>
+
+  <div class="cta">
+    <h2>Try it</h2>
+    <p class="sub">Ideas or bugs? <a href="https://github.com/shabab239/WindyLand/issues">Open an issue</a>.</p>
+    <a class="dl" href="https://github.com/shabab239/WindyLand/releases/latest" data-dl>
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/></svg>
+      <span>Download for Windows</span>
+    </a>
+  </div>
+</div>
+
+<footer>
+  <div class="wrap">
+    <span>WindyLand by <a href="https://github.com/shabab239">Shabab Ahmed</a>. Not affiliated with Apple.</span>
+    <span><a href="https://github.com/shabab239/WindyLand">Source</a> · <a href="https://github.com/shabab239/WindyLand/blob/main/docs/USER_GUIDE.md">User guide</a> · <a href="https://github.com/shabab239/WindyLand/blob/main/CHANGELOG.md">Changelog</a> · <a href="https://github.com/shabab239/WindyLand/blob/main/PRIVACY.md">Privacy</a></span>
+  </div>
+</footer>
+
+<script>
+  // Point the buttons straight at the newest installer. If GitHub can't be
+  // reached, they keep linking to the Releases page.
+  fetch("https://api.github.com/repos/shabab239/WindyLand/releases/latest")
+    .then(r => r.ok ? r.json() : Promise.reject())
+    .then(rel => {
+      const exe = (rel.assets || []).find(a => /\.exe$/i.test(a.name));
+      if (!exe) return;
+      const v = (rel.tag_name || "").replace(/^v/, "");
+      const mb = (exe.size / 1048576).toFixed(1);
+      document.querySelectorAll("#dl, [data-dl]").forEach(a => a.href = exe.browser_download_url);
+      document.getElementById("dl-text").textContent = "Download for Windows";
+      document.getElementById("dl-meta").textContent = "Version " + v + " · " + mb + " MB · Windows 10 and 11 · free";
+    })
+    .catch(() => {});
+</script>
+</body>
+</html>

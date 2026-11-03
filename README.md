@@ -1,5 +1,7 @@
 <p align="center"><img src="docs/images/hero.png" alt="WindyLand" width="100%"></p>
 
+<p align="center"><a href="https://shabab239.github.io/WindyLand/"><b>Download for Windows</b></a> · <a href="https://shabab239.github.io/WindyLand/">Website</a> · <a href="docs/USER_GUIDE.md">User guide</a></p>
+
 # WindyLand
 
 A living notch for Windows 10 and 11, like the Dynamic Island. Music with
@@ -55,7 +57,8 @@ on. See the [privacy policy](PRIVACY.md).
 
 ## Install
 
-Download `WindyLandSetup-<version>.exe` from
+Download `WindyLandSetup-<version>.exe` from the
+[website](https://shabab239.github.io/WindyLand/) or
 [Releases](https://github.com/shabab239/WindyLand/releases) and run it. It
 installs per user, no admin rights needed. A short welcome tour lets you pick
 the look, and later versions install with one click from the notch.
