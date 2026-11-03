@@ -178,14 +178,23 @@ pub fn times(c: &Calc, y: i32, m: i32, d: i32) -> [f64; 6] {
     t.map(|h| h + adj)
 }
 
-/// "15:47" from hours, rounded to the minute.
-pub fn hhmm(h: f64) -> String {
+/// "15:47" from hours, rounded to the minute (always 24-hour; tests).
+pub fn hhmm24(h: f64) -> String {
     if !h.is_finite() {
         return "--:--".into();
     }
     let m = (h * 60.0).round() as i64;
     let m = m.rem_euclid(24 * 60);
     format!("{:02}:{:02}", m / 60, m % 60)
+}
+
+/// "3:47 PM" (or "15:47" on the 24-hour clock) from hours.
+pub fn hhmm(h: f64) -> String {
+    if !h.is_finite() {
+        return "--:--".into();
+    }
+    let m = ((h * 60.0).round() as i64).rem_euclid(24 * 60) as u32;
+    crate::time::clock_full(m / 60, m % 60)
 }
 
 /// The PC's current UTC offset in hours (includes daylight saving).
@@ -448,7 +457,7 @@ impl Prayer {
                 let i = col_i * 3 + row_i;
                 let mut c = cell;
                 ui.text(NAMES[i], c.cut_left(62.0, 0.0), 12.0, col::TEXT, Weight::Regular, Align::Left);
-                ui.text(&hhmm(t[i]), c.cut_left(44.0, 6.0), 12.0, col::DIM, Weight::Regular, Align::Left);
+                ui.text(&hhmm(t[i]), c.cut_left(60.0, 6.0), 12.0, col::DIM, Weight::Regular, Align::Left);
                 ui.icon_btn(c.cut_left(24.0, 4.0), "\u{E738}", A_MINUS + i as u32, 10.0, col::TEXT, Some(col::BTN), "A minute earlier");
                 let o = self.offsets[i];
                 let label = if o == 0 { "0".to_string() } else { format!("{o:+}") };
@@ -557,7 +566,7 @@ impl Module for Prayer {
             }
             A_TEST_RELOAD => *self = Prayer::load(),
             A_DEMO => {
-                let sub = format!("{} · {}", Now::get().hhmm(), self.place());
+                let sub = format!("{} · {}", Now::get().hhmm_full(), self.place());
                 ctx.toast(Toast::new("prayer", MOON, ACCENT, "Time for Asr", sub).action("OK", A_T_OK).secs(20.0).chime());
             }
             A_SETTINGS => self.page = Page::Location,
@@ -676,6 +685,6 @@ impl Module for Prayer {
     fn debug_state(&self) -> String {
         let mut me = Prayer { cache: self.cache.clone(), fired: Vec::new(), editing: None, page: Page::Main, ..*self };
         let t = me.today();
-        format!("{} ({:.4}, {:.4}) {} {} tz {:+} : {}", me.place(), self.lat, self.lon, METHODS[self.method].1, if self.hanafi { "Hanafi" } else { "Shafi" }, local_tz(), t.iter().map(|h| hhmm(*h)).collect::<Vec<_>>().join(" "))
+        format!("{} ({:.4}, {:.4}) {} {} tz {:+} : {}", me.place(), self.lat, self.lon, METHODS[self.method].1, if self.hanafi { "Hanafi" } else { "Shafi" }, local_tz(), t.iter().map(|h| hhmm24(*h)).collect::<Vec<_>>().join(" "))
     }
 }

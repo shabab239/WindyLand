@@ -67,12 +67,15 @@ Open **Settings** and pick one under **Notch style**:
 | Pill | A thin bar, tinted while music or a timer runs | Almost invisible |
 | Hidden | Nothing | Rest the mouse at the edge to open |
 
+**Maximized windows:** with a maximized window under it (Chrome, Edge, VS Code...), the Full and Compact notch slims down to a thin bar, and clicks go straight through it, so the browser tabs under the notch stay clickable. Rest the mouse on the bar for a moment to open the notch. Alerts still drop down as usual. Turn this off with **Slim down over maximized apps** in Settings > General.
+
 ## Now playing and lyrics
 
 <img src="images/lyrics.png" alt="Lyrics">
 
 - Works with anything that shows in the Windows media overlay: Spotify, YouTube and other sites in Chrome, Edge or Firefox, Media Player and more.
 - **Click the progress bar** to seek. Use the previous, play/pause and next buttons.
+- If a player turns down a skip (some web players), WindyLand presses the media key for you instead. The previous and next buttons look dimmed when the player says it can't skip right now (a single video, the first track). Most players restart the song when you press previous a few seconds in; press it twice to go back a track.
 - **Lyrics**: click the lines button on the right. The panel splits and the current line lights up. Click a line to jump to it, or scroll to look ahead.
 - When music plays, the closed notch shows the album art and a small equaliser.
 - Some songs have no lyrics on LRCLIB yet; the panel then says *Lyrics not available*.
@@ -191,7 +194,7 @@ The Tools tab has four small tools; the chips at the top switch between them. Ev
 - **Click** an item to open it. **Drag** it out into a chat, an email or a folder.
 - Hover an item and click the **x** to remove it. **Clear** empties the shelf.
 - The shelf keeps links to your files, not copies.
-- **Screenshot**: the notch closes and the screen freezes; drag over the part you want (or just click for the whole screen), Esc cancels. The picture is saved as a PNG in **Pictures\Screenshots**, added to the Shelf (drag it into a chat) and copied to the clipboard.
+- **Screenshot**: the notch hides and the screen freezes; drag over the part you want (or just click for the whole screen), Esc cancels. The picture is saved as a PNG in **Pictures\Screenshots**, added to the Shelf (drag it into a chat) and copied to the clipboard.
 
 ## Clipboard history
 
@@ -206,6 +209,7 @@ The Tools tab has four small tools; the chips at the top switch between them. Ev
 - To only copy it, hover the entry and click the **copy** icon; then paste wherever you like with Ctrl+V.
 - Apps running as administrator don't accept typing from normal apps, so for those the entry is only copied and the notch says **press Ctrl+V**.
 - Hover an entry to **copy** it without pasting, **pin** it (pinned entries stay at the top and are kept after a restart) or **remove** it. **Clear** removes everything that isn't pinned. The switch in the tab header stops and starts recording.
+- **Show what I copy** (Settings > Privacy, off by default): every time you copy something, a small toast shows it for two seconds, like on Android: the text, the file names, or a thumbnail of the picture. It works even with clipboard history off and keeps nothing. WindyLand's own copies (pasting an entry, a color, a screenshot) don't show.
 - Privacy: unpinned entries and all pictures live in memory only and are gone when WindyLand exits. Pinned text and files are saved in `clipboard.txt`. Passwords and codes copied from password managers that mark them private (KeePass, Bitwarden, 1Password and others) are never recorded.
 
 ## Mic and camera dots
@@ -266,6 +270,8 @@ Open Settings with the **gear** at the end of the tab bar, a plain **right-click
 | Sound for reminders | Chime, Bell, Pop, Marimba, Windows (your system sound) or Off; picking one plays it |
 | **General** page: Start with Windows | Launch at sign-in |
 | Volume overlay | Show volume changes |
+| 12-hour clock | 4:20 PM (the default) or 16:20, everywhere in WindyLand |
+| Slim down over maximized apps | A thin, click-through bar while a maximized window is under the notch (on by default) |
 | Check for updates | Looks for a newer version now |
 | Check for updates automatically | Asks GitHub for the latest version about twice a day. On by default; also offered by the installer |
 | Open data folder | Opens `%APPDATA%\WindyLand` |
@@ -273,6 +279,7 @@ Open Settings with the **gear** at the end of the tab bar, a plain **right-click
 | **Privacy** page: Windows notifications | Show them in the notch, include message text, Windows banners, unmute apps |
 | Mic & camera dots | Dots while the mic or camera is in use |
 | Clipboard history | Record on/off, and Text, Text + files or Everything |
+| Show what I copy | A small preview of each copy (off by default) |
 | **Panels** page | Show or hide each panel. A hidden panel is off: no tab and no reminders. One always stays |
 
 Right-clicking the tray icon shows a short menu: Settings, Welcome tour, Check for updates, About and Exit. Resting the mouse on any icon button shows what it does.

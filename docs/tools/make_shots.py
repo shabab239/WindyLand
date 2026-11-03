@@ -218,7 +218,7 @@ def make(data, run, read_raw, wallpaper, fake_windows, rounded_mask, font):
     print("   styles")
 
     # Alerts: toasts in two columns.
-    toasts = ["toast_notification", "toast_agent", "toast_timer", "toast_water", "toast_todo", "toast_pomodoro", "toast_charging", "toast_volume", "toast_mic", "toast_caps", "toast_bt", "toast_agent_done"]
+    toasts = ["toast_notification", "toast_agent", "toast_timer", "toast_water", "toast_todo", "toast_pomodoro", "toast_charging", "toast_volume", "toast_mic", "toast_caps", "toast_bt", "toast_copy", "toast_agent_done"]
     imgs = [shot(t) for t in toasts]
     row_h = max(i.height for i in imgs) + 40
     rows = (len(imgs) + 1) // 2

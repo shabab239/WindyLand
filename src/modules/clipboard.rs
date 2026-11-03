@@ -5,6 +5,10 @@
 //! (adds images). Pinned text/files are saved and survive restarts;
 //! everything else, and every image, lives in memory only. Anything a
 //! password manager marks as private is never recorded.
+//!
+//! "Show what I copy" (also off by default) drops a small toast with a
+//! preview of each copy, like Android. It works with recording off too;
+//! nothing is kept for it.
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
@@ -78,6 +82,14 @@ fn mode_byte(m: ClipMode) -> u8 {
     }
 }
 
+/// A copy seen by the listener: whether to keep it (history) and whether
+/// to show it (copy toast).
+struct Incoming {
+    content: Content,
+    record: bool,
+    show: bool,
+}
+
 #[derive(Clone)]
 struct Entry {
     id: u32,
@@ -96,6 +108,11 @@ const A_FIELD: u32 = 5;
 pub const A_DEMO: u32 = 990;
 /// Docs/demo video: a few realistic entries.
 pub const A_DEMO_DOCS: u32 = 991;
+/// Self-test / demo: as if text, a picture or two files were just copied
+/// with "Show what I copy" on (history off).
+pub const A_TEST_COPY_TEXT: u32 = 992;
+pub const A_TEST_COPY_IMAGE: u32 = 993;
+pub const A_TEST_COPY_FILES: u32 = 994;
 const K_COPY: u32 = 1;
 const K_PIN: u32 = 2;
 const K_DELETE: u32 = 3;
@@ -108,8 +125,12 @@ fn eid(kind: u32, id: u32) -> u32 {
 pub struct Clipboard {
     items: Vec<Entry>,
     next_id: u32,
-    incoming: Arc<Mutex<Vec<Content>>>,
+    incoming: Arc<Mutex<Vec<Incoming>>>,
     on: Arc<AtomicBool>,
+    /// "Show what I copy" (mirrors the setting for the listener thread).
+    show: Arc<AtomicBool>,
+    /// Last copy shown in a toast and when, so a repeat isn't shown twice.
+    last_shown: Option<(Content, f64)>,
     mode: Arc<AtomicU8>,
     /// Image thumbnails as GPU bitmaps: entry id -> (render-target generation, bitmap).
     thumbs: HashMap<u32, (u32, ID2D1Bitmap)>,
@@ -149,12 +170,15 @@ impl Clipboard {
         let incoming = Arc::new(Mutex::new(Vec::new()));
         let st = store::Settings::load();
         let on = Arc::new(AtomicBool::new(st.clip_on));
+        let show = Arc::new(AtomicBool::new(st.copy_toast));
         let mode = Arc::new(AtomicU8::new(mode_byte(st.clip_mode)));
         let mut c = Clipboard {
             items: Vec::new(),
             next_id: 1,
             incoming: incoming.clone(),
             on: on.clone(),
+            show: show.clone(),
+            last_shown: None,
             mode: mode.clone(),
             thumbs: HashMap::new(),
             scroll: 0.0,
@@ -167,8 +191,25 @@ impl Clipboard {
             snippet: None,
         };
         c.load();
-        spawn_listener(incoming, on, mode, hwnd.0 as isize);
+        spawn_listener(incoming, on, show, mode, hwnd.0 as isize);
         c
+    }
+
+    /// Show a copy in a toast, unless it's the same thing shown a moment ago.
+    fn show_copy(&mut self, c: &Content, ctx: &mut Ctx) {
+        let now = unix_now();
+        if let Some((last, at)) = &self.last_shown {
+            if last == c && now - at < 4.0 {
+                return;
+            }
+        }
+        if let Content::Text(t) = c {
+            if t.trim().is_empty() {
+                return;
+            }
+        }
+        self.last_shown = Some((c.clone(), now));
+        ctx.toast(copy_toast(c));
     }
 
     fn load(&mut self) {
@@ -318,6 +359,71 @@ fn field(ui: &mut Ui, r: Rect, text: &str, placeholder: &str) {
 }
 
 /// One line of preview text for an entry.
+/// True when this process put the current clipboard contents there.
+fn copied_by_us() -> bool {
+    unsafe {
+        let Ok(owner) = GetClipboardOwner() else { return false };
+        if owner.0.is_null() {
+            return false;
+        }
+        let mut pid = 0u32;
+        GetWindowThreadProcessId(owner, Some(&mut pid));
+        pid == windows::Win32::System::Threading::GetCurrentProcessId()
+    }
+}
+
+/// The "Show what I copy" toast for a copy: a short preview, and a
+/// thumbnail for pictures.
+pub fn copy_toast(c: &Content) -> crate::modules::Toast {
+    use crate::modules::Toast;
+    let cut = |s: &str, n: usize| -> String {
+        let one: String = s.split_whitespace().collect::<Vec<_>>().join(" ");
+        if one.chars().count() > n {
+            format!("{}...", one.chars().take(n).collect::<String>().trim_end())
+        } else {
+            one
+        }
+    };
+    let t = match c {
+        Content::Text(s) => {
+            let lines = s.lines().filter(|l| !l.trim().is_empty()).count();
+            let more = if lines > 1 { format!("{lines} lines") } else { String::new() };
+            Toast::new("copy", glyph::PASTE, col::BLUE, "Copied", cut(s, 90)).right(more)
+        }
+        Content::Files(f) => {
+            let name = |p: &String| p.rsplit(['\\', '/']).next().unwrap_or(p).to_string();
+            let title = if f.len() == 1 { "Copied a file".to_string() } else { format!("Copied {} files", f.len()) };
+            let names: Vec<String> = f.iter().take(3).map(name).collect();
+            let more = if f.len() > 3 { format!(" + {} more", f.len() - 3) } else { String::new() };
+            Toast::new("copy", glyph::FOLDER, col::BLUE, title, format!("{}{more}", cut(&names.join(", "), 80)))
+        }
+        Content::Image(im) => {
+            let t = Toast::new("copy", glyph::PASTE, col::BLUE, "Copied a picture", format!("{} x {}", im.w, im.h));
+            match square_thumb(&im.thumb) {
+                Some(sq) => t.image(Arc::new(sq)),
+                None => t,
+            }
+        }
+    };
+    t.secs(2.2)
+}
+
+/// Centre square of a thumbnail (the toast draws its picture square).
+fn square_thumb(th: &(u32, u32, Vec<u8>)) -> Option<(u32, u32, Vec<u8>)> {
+    let (w, h, px) = th;
+    let s = (*w).min(*h);
+    if s == 0 || px.len() < (*w * *h * 4) as usize {
+        return None;
+    }
+    let (x0, y0) = ((w - s) / 2, (h - s) / 2);
+    let mut out = Vec::with_capacity((s * s * 4) as usize);
+    for y in 0..s {
+        let start = (((y0 + y) * w + x0) * 4) as usize;
+        out.extend_from_slice(&px[start..start + (s * 4) as usize]);
+    }
+    Some((s, s, out))
+}
+
 fn preview(c: &Content) -> String {
     match c {
         Content::Text(t) => {
@@ -383,10 +489,16 @@ impl Module for Clipboard {
         // Mirror the settings for the listener thread (off too while the
         // Clipboard panel is hidden in Settings > Panels).
         self.on.store(ctx.settings.clip_on && !ctx.settings.panel_hidden("Clipboard"), Ordering::Relaxed);
+        self.show.store(ctx.settings.copy_toast, Ordering::Relaxed);
         self.mode.store(mode_byte(ctx.settings.clip_mode), Ordering::Relaxed);
-        let new: Vec<Content> = std::mem::take(&mut *self.incoming.lock().unwrap());
-        for c in new {
-            self.add(c);
+        let new: Vec<Incoming> = std::mem::take(&mut *self.incoming.lock().unwrap());
+        for inc in new {
+            if inc.show && ctx.settings.copy_toast {
+                self.show_copy(&inc.content, ctx);
+            }
+            if inc.record {
+                self.add(inc.content);
+            }
         }
     }
 
@@ -620,6 +732,26 @@ impl Module for Clipboard {
                 ctx.settings.save();
                 self.on.store(ctx.settings.clip_on, Ordering::Relaxed);
             }
+            A_TEST_COPY_TEXT | A_TEST_COPY_IMAGE | A_TEST_COPY_FILES => {
+                let c = match id {
+                    A_TEST_COPY_TEXT => Content::Text("Meeting moved to 4:30 pm, same room.\nBring the printed slides.".into()),
+                    A_TEST_COPY_FILES => Content::Files(vec![r"C:\Users\You\Documents\Report final.docx".into(), r"C:\Users\You\Pictures\Logo.png".into()]),
+                    _ => {
+                        // A small blue-and-orange picture.
+                        let (w, h) = (64u32, 40u32);
+                        let mut px = vec![0u8; (w * h * 4) as usize];
+                        for y in 0..h {
+                            for x in 0..w {
+                                let d = ((y * w + x) * 4) as usize;
+                                let c = if x < w / 2 { [230, 120, 40, 255] } else { [30, 150, 255, 255] };
+                                px[d..d + 4].copy_from_slice(&c);
+                            }
+                        }
+                        Content::Image(Arc::new(Image { w: 1600, h: 1000, dib: Vec::new(), hash: 7, thumb: (w, h, px) }))
+                    }
+                };
+                self.incoming.lock().unwrap().push(Incoming { content: c, record: false, show: true });
+            }
             A_DEMO_DOCS => {
                 let logo = crate::store::dir().join("Demo files").join("Logo final.png");
                 self.add(Content::Files(vec![logo.display().to_string()]));
@@ -717,8 +849,9 @@ impl Module for Clipboard {
 // ------------------------------------------------------------ win32 side
 
 struct ListenerState {
-    incoming: Arc<Mutex<Vec<Content>>>,
+    incoming: Arc<Mutex<Vec<Incoming>>>,
     on: Arc<AtomicBool>,
+    show: Arc<AtomicBool>,
     mode: Arc<AtomicU8>,
     main: isize,
 }
@@ -727,8 +860,8 @@ static LISTENER: OnceLock<ListenerState> = OnceLock::new();
 
 /// A message-only window on its own thread gets WM_CLIPBOARDUPDATE the
 /// moment anything is copied, reads it, and wakes the notch.
-fn spawn_listener(incoming: Arc<Mutex<Vec<Content>>>, on: Arc<AtomicBool>, mode: Arc<AtomicU8>, main: isize) {
-    if LISTENER.set(ListenerState { incoming, on, mode, main }).is_err() {
+fn spawn_listener(incoming: Arc<Mutex<Vec<Incoming>>>, on: Arc<AtomicBool>, show: Arc<AtomicBool>, mode: Arc<AtomicU8>, main: isize) {
+    if LISTENER.set(ListenerState { incoming, on, show, mode, main }).is_err() {
         return;
     }
     std::thread::spawn(|| unsafe {
@@ -759,12 +892,34 @@ fn spawn_listener(incoming: Arc<Mutex<Vec<Content>>>, on: Arc<AtomicBool>, mode:
 extern "system" fn listener_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
     if msg == WM_CLIPBOARDUPDATE {
         if let Some(st) = LISTENER.get() {
-            if st.on.load(Ordering::Relaxed) {
-                if let Some(c) = read_clipboard(hwnd, st.mode.load(Ordering::Relaxed)) {
-                    st.incoming.lock().unwrap().push(c);
-                    unsafe {
-                        let _ = PostMessageW(HWND(st.main as *mut _), WM_APP_WAKE, WPARAM(0), LPARAM(0));
+            let record = st.on.load(Ordering::Relaxed);
+            // WindyLand's own copies (a history entry, a colour, a
+            // screenshot) aren't news: no toast for those.
+            let show = st.show.load(Ordering::Relaxed) && !copied_by_us();
+            let mode = st.mode.load(Ordering::Relaxed);
+            let mut got = Vec::new();
+            if record {
+                if let Some(c) = read_clipboard(hwnd, mode) {
+                    got.push(Incoming { content: c, record: true, show: false });
+                }
+            }
+            if show {
+                // The toast previews anything (text, files, a picture),
+                // whatever the history records.
+                let same = record && mode == 2;
+                match got.first_mut() {
+                    Some(inc) if same => inc.show = true,
+                    _ => {
+                        if let Some(c) = read_clipboard(hwnd, 2) {
+                            got.push(Incoming { content: c, record: false, show: true });
+                        }
                     }
+                }
+            }
+            if !got.is_empty() {
+                st.incoming.lock().unwrap().extend(got);
+                unsafe {
+                    let _ = PostMessageW(HWND(st.main as *mut _), WM_APP_WAKE, WPARAM(0), LPARAM(0));
                 }
             }
         }

@@ -13,6 +13,35 @@ pub fn demo() -> bool {
     DEMO.load(std::sync::atomic::Ordering::Relaxed)
 }
 
+/// 12-hour clock (Settings > General); mirrors `Settings::clock12`.
+pub static H12: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
+
+pub fn h12() -> bool {
+    H12.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// Clock face: "4:20" (12-hour, like a phone's status bar) or "16:20".
+pub fn clock(hour: u32, min: u32) -> String {
+    if h12() {
+        let h = match hour % 12 {
+            0 => 12,
+            h => h,
+        };
+        format!("{h}:{min:02}")
+    } else {
+        format!("{:02}:{min:02}", hour % 24)
+    }
+}
+
+/// A time in a list or message: "4:20 PM" or "16:20".
+pub fn clock_full(hour: u32, min: u32) -> String {
+    if h12() {
+        format!("{} {}", clock(hour, min), if hour % 24 < 12 { "AM" } else { "PM" })
+    } else {
+        clock(hour, min)
+    }
+}
+
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Now {
     pub year: u16,
@@ -53,8 +82,13 @@ impl Now {
     pub fn minute_of_day(&self) -> u32 {
         self.hour as u32 * 60 + self.min as u32
     }
+    /// The clock face ("4:20" or "16:20").
     pub fn hhmm(&self) -> String {
-        format!("{:02}:{:02}", self.hour, self.min)
+        clock(self.hour as u32, self.min as u32)
+    }
+    /// "4:20 PM" or "16:20".
+    pub fn hhmm_full(&self) -> String {
+        clock_full(self.hour as u32, self.min as u32)
     }
     /// "Tue 27 Oct"
     pub fn short_date(&self) -> String {
@@ -89,7 +123,7 @@ pub fn fmt_dur(secs: f64) -> String {
     }
 }
 
-/// Minutes-of-day to "09:30".
+/// Minutes-of-day to "9:30 AM" (or "09:30" on the 24-hour clock).
 pub fn fmt_mod(m: u32) -> String {
-    format!("{:02}:{:02}", (m / 60) % 24, m % 60)
+    clock_full((m / 60) % 24, m % 60)
 }

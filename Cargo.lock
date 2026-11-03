@@ -268,7 +268,7 @@ checksum = "589f6da84c646204747d1270a2a5661ea66ed1cced2631d546fdfb155959f9ec"
 
 [[package]]
 name = "windyland"
-version = "0.1.19"
+version = "0.1.20"
 dependencies = [
  "qrcodegen",
  "serde_json",

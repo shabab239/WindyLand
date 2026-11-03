@@ -301,6 +301,13 @@ pub struct Settings {
     pub notif_on: bool,
     /// Include the message text (off: only the app name shows).
     pub notif_text: bool,
+    /// 12-hour clock ("4:20 PM"); off = 24-hour ("16:20").
+    pub clock12: bool,
+    /// A small toast showing what was just copied (opt-in).
+    pub copy_toast: bool,
+    /// Shrink to a thin, click-through bar while a maximized window is
+    /// under the notch (browser tabs stay clickable).
+    pub make_room: bool,
     pub extra: BTreeMap<String, String>,
 }
 
@@ -342,6 +349,9 @@ impl Settings {
             hidden_panels: kv.get("hidden_panels").map_or(Vec::new(), |v| v.split(',').filter(|s| !s.is_empty()).map(String::from).collect()),
             notif_on: kv.get("notif_on").map_or(false, |v| v == "1"),
             notif_text: kv.get("notif_text").map_or(true, |v| v == "1"),
+            clock12: kv.get("clock12").map_or(true, |v| v != "0"),
+            copy_toast: kv.get("copy_toast").map_or(false, |v| v == "1"),
+            make_room: kv.get("make_room").map_or(true, |v| v != "0"),
             extra: kv,
         }
     }
@@ -372,6 +382,9 @@ impl Settings {
         }
         kv.insert("notif_on".into(), (self.notif_on as u8).to_string());
         kv.insert("notif_text".into(), (self.notif_text as u8).to_string());
+        kv.insert("clock12".into(), (self.clock12 as u8).to_string());
+        kv.insert("copy_toast".into(), (self.copy_toast as u8).to_string());
+        kv.insert("make_room".into(), (self.make_room as u8).to_string());
         write("settings.txt", &write_kv(&kv));
     }
 }

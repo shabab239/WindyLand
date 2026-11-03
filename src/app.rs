@@ -70,14 +70,14 @@ const TOUR_PANELS: [(&str, &str, &str); 4] = [
 
 /// Tour step 4: what's in Settings, at a glance.
 const TOUR_SETTINGS: [(&str, &str, &str); 8] = [
-    ("\u{E771}", "Style & edge", "4 looks, any screen edge"),
+    ("\u{E771}", "Style & edge", "4 looks; slims over full windows"),
     ("\u{E76E}", "Mascot", "Follows your mouse"),
     (glyph::VOLUME, "Sounds", "Pick a chime, or none"),
     ("\u{E8A9}", "Panels", "Hide what you don't use"),
     (glyph::BELL, "Notifications", "Opt-in Windows alerts"),
-    (glyph::PASTE, "Clipboard", "Opt-in copy history"),
+    (glyph::PASTE, "Clipboard", "History and copy previews"),
     ("\u{E708}", "Prayer times", "Times and reminders"),
-    ("\u{E896}", "Updates", "One click to update"),
+    (glyph::ALARM, "Clock", "12 or 24 hour"),
 ];
 const TOUR_Q_SETTINGS: &str = "Right-click the notch, or click the tray icon, for Settings:";
 
@@ -106,11 +106,16 @@ const S_MASCOT_ALWAYS: u32 = 105;
 const S_UPDATE_AUTO: u32 = 109;
 const S_MASCOT_POS: u32 = 106; // + 0 left, 1 centre, 2 right
 const S_PANEL: u32 = 120; // + module index
+const S_CLOCK12: u32 = 110;
+const S_MAKE_ROOM: u32 = 111;
+const S_COPY_TOAST: u32 = 112;
 /// Hit id of a toast's body (clicking the toast itself, not a button).
 const TOAST_BODY: u32 = 999;
 
 const TIMER_TICK: usize = 1;
 const TIMER_FRAME: usize = 2;
+/// Watches the cursor while the notch is click-through ("make room").
+const TIMER_POLL: usize = 3;
 /// Self-test: seconds since the last input, or -1 for the real value (build
 /// servers have had no mouse movement for ages, so the mascot would doze).
 pub static IDLE_OVERRIDE: std::sync::atomic::AtomicI64 = std::sync::atomic::AtomicI64::new(-1);
@@ -118,6 +123,11 @@ pub static IDLE_OVERRIDE: std::sync::atomic::AtomicI64 = std::sync::atomic::Atom
 /// Self-test: behave as if no full-screen app were running (the tests run
 /// on the user's PC, maybe while a game is open).
 pub static FORCE_VISIBLE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// "Is a maximized window under the notch?" override: 0 = ask Windows,
+/// 1 = yes, 2 = no. Self-test and docs renders use 2 (his PC may have a
+/// maximized window open) and 1 for the make-room checks.
+pub static MAXIMIZED_OVERRIDE: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(0);
 
 /// `frame_interval` value meaning "draw on every display refresh".
 pub const VSYNC: u32 = 1;
@@ -248,6 +258,14 @@ pub struct App {
     /// Set after clicking a toast button: hovering must not reopen the panel
     /// until the mouse has left the notch once.
     hover_block: bool,
+    /// A maximized window is under the notch (checked every second).
+    max_under: bool,
+    /// The window is click-through right now (WS_EX_TRANSPARENT).
+    passthrough: bool,
+    /// While click-through: when the cursor reached the hover zone.
+    poll_since: Option<f64>,
+    /// Self-test: space left at the bottom of each Settings page.
+    settings_room: [f32; 3],
     /// Hit under the mouse with a tooltip: (module, id, since, suppressed by a click).
     tip: Option<(usize, u32, f64, bool)>,
     pub deferred: Vec<Deferred>,
@@ -390,6 +408,10 @@ impl App {
                 mood_since: 0.0,
                 last_activity: 0.0,
                 hover_block: false,
+                max_under: false,
+                passthrough: false,
+                poll_since: None,
+                settings_room: [0.0; 3],
                 tip: None,
                 deferred: Vec::new(),
             };
@@ -510,6 +532,9 @@ impl App {
             self.expanded = false;
             self.settings_open = false;
             self.leave_at = None;
+            // The cursor is still on the button: don't reopen under it
+            // (Screenshot and Pick from screen need the notch out of the way).
+            self.hover_block = true;
         }
         self.request_frame();
         r
@@ -571,8 +596,119 @@ impl App {
             self.tab = tabs.first().copied().unwrap_or(0);
         }
         self.check_fullscreen();
+        crate::time::H12.store(self.settings.clock12, std::sync::atomic::Ordering::Relaxed);
+        self.update_make_room();
         self.update_mood();
         self.request_frame();
+    }
+
+    // ------------------------------------------------------- make room
+
+    /// The look the closed notch uses right now: a thin bar while it is
+    /// making room for a maximized window (Full and Compact only).
+    fn look(&self) -> NotchStyle {
+        match self.settings.style {
+            NotchStyle::Full | NotchStyle::Compact if self.yielding() => NotchStyle::Pill,
+            s => s,
+        }
+    }
+
+    /// Making room: the setting is on and a maximized window is under us.
+    fn yielding(&self) -> bool {
+        self.settings.make_room && self.max_under
+    }
+
+    /// True when the foreground window is maximized on the notch's screen.
+    fn maximized_under(&self) -> bool {
+        match MAXIMIZED_OVERRIDE.load(std::sync::atomic::Ordering::Relaxed) {
+            1 => return true,
+            2 => return false,
+            _ => {}
+        }
+        unsafe {
+            let fg = GetForegroundWindow();
+            if fg.0.is_null() || fg == self.hwnd || !IsZoomed(fg).as_bool() || !IsWindowVisible(fg).as_bool() {
+                return false;
+            }
+            MonitorFromWindow(fg, MONITOR_DEFAULTTONEAREST) == MonitorFromWindow(self.hwnd, MONITOR_DEFAULTTONEAREST)
+        }
+    }
+
+    pub fn update_make_room(&mut self) {
+        let m = self.maximized_under();
+        if m != self.max_under {
+            dlog(format!("maximized under: {m}"));
+            self.max_under = m;
+            self.request_frame();
+        }
+        self.sync_passthrough();
+    }
+
+    /// Click-through while the closed notch makes room, so the tabs under
+    /// it stay clickable; a cursor poll opens it on hover instead.
+    fn sync_passthrough(&mut self) {
+        let want = self.yielding() && !self.hidden && self.mode() == Mode::Collapsed && self.queue.is_empty() && !self.dragging && self.rdrag.is_none();
+        if want == self.passthrough {
+            return;
+        }
+        self.passthrough = want;
+        self.poll_since = None;
+        unsafe {
+            let ex = GetWindowLongPtrW(self.hwnd, GWL_EXSTYLE);
+            let t = WS_EX_TRANSPARENT.0 as isize;
+            SetWindowLongPtrW(self.hwnd, GWL_EXSTYLE, if want { ex | t } else { ex & !t });
+            if want {
+                SetTimer(self.hwnd, TIMER_POLL, 90, None);
+            } else {
+                let _ = KillTimer(self.hwnd, TIMER_POLL);
+            }
+        }
+        if want {
+            // No more mouse messages until it opens again.
+            self.hover = false;
+            self.tip = None;
+        }
+    }
+
+    fn poll_cursor(&mut self) {
+        if !self.passthrough {
+            return;
+        }
+        let mut p = POINT::default();
+        unsafe {
+            let _ = GetCursorPos(&mut p);
+        }
+        let x = (p.x - self.origin.0) as f32 / self.scale;
+        let y = (p.y - self.origin.1) as f32 / self.scale;
+        self.poll_at(x, y);
+        // Un-maximized or switched app: stop making room right away.
+        self.update_make_room();
+    }
+
+    /// Cursor at canvas (x, y) while click-through: rest on the bar to open.
+    pub fn poll_at(&mut self, x: f32, y: f32) {
+        let zone = self.edge_rect(220.0, 16.0);
+        if !zone.contains(x, y) {
+            self.poll_since = None;
+            self.hover_block = false;
+            return;
+        }
+        if !self.can_hover_open() {
+            return;
+        }
+        let t = self.t();
+        let since = *self.poll_since.get_or_insert(t);
+        if t - since >= NotchStyle::Pill.hover_delay() {
+            self.poll_since = None;
+            self.passthrough = false;
+            unsafe {
+                let ex = GetWindowLongPtrW(self.hwnd, GWL_EXSTYLE);
+                SetWindowLongPtrW(self.hwnd, GWL_EXSTYLE, ex & !(WS_EX_TRANSPARENT.0 as isize));
+                let _ = KillTimer(self.hwnd, TIMER_POLL);
+            }
+            self.on_mouse_move(x, y);
+            self.open_from_hover();
+        }
     }
 
     /// Hide while a game, video or presentation fills the notch's screen.
@@ -683,7 +819,7 @@ impl App {
         }
         let idle = Self::system_idle_secs();
         let always = self.settings.mascot_always;
-        let next = if !self.settings.personality || (busy && !always) || self.settings.style != NotchStyle::Full {
+        let next = if !self.settings.personality || (busy && !always) || self.look() != NotchStyle::Full {
             Mood::Clock
         } else {
             match self.mood {
@@ -782,7 +918,7 @@ impl App {
             Mode::Collapsed => {
                 let live = self.live_module().is_some();
                 let side_mascot = matches!(self.mascot_side(), Some(0 | 2));
-                match (self.settings.style, vertical) {
+                match (self.look(), vertical) {
                     (NotchStyle::Full, false) if live && side_mascot => (364.0, 34.0, 13.0),
                     (NotchStyle::Full, false) if live => (300.0, 34.0, 13.0),
                     (NotchStyle::Full, false) => (200.0, 32.0, 12.0),
@@ -830,6 +966,8 @@ impl App {
         let t = self.t();
         let dt = (t - self.last_frame).clamp(0.0, 0.1) as f32;
         self.last_frame = t;
+        // A toast or an opened panel must take clicks again at once.
+        self.sync_passthrough();
 
         if self.mode() == Mode::Collapsed && !self.settings_open {
             if let Some(i) = self.remembered_tab() {
@@ -841,7 +979,7 @@ impl App {
         }
 
         // Open once the mouse has rested on the collapsed notch long enough.
-        if self.hover && self.can_hover_open() && t - self.hover_since >= self.settings.style.hover_delay() {
+        if self.hover && self.can_hover_open() && t - self.hover_since >= self.look().hover_delay() {
             self.open_from_hover();
         }
         // Collapse after the mouse has left for a moment.
@@ -989,7 +1127,7 @@ impl App {
         self.hits.clear();
         self.gfx.begin(self.scale);
         let ear = (depth / 4.0).min(9.0);
-        let barless = matches!(self.settings.style, NotchStyle::Pill | NotchStyle::Hidden);
+        let barless = matches!(self.look(), NotchStyle::Pill | NotchStyle::Hidden);
         if depth >= 0.5 {
             if let Some(geo) = self.gfx.notch_geometry(notch, rad, ear, edge) {
                 self.gfx.fill_geometry(&geo, col::NOTCH);
@@ -1371,7 +1509,9 @@ impl App {
         if page == 0 {
             ui.toggle(right.cut_top(26.0, 2.0), "Start with Windows", startup, S_STARTUP, accent);
             ui.toggle(right.cut_top(26.0, 2.0), "Volume overlay", st.volume_overlay, S_VOLUME, accent);
-            ui.toggle(right.cut_top(26.0, 12.0), "Check for updates automatically", st.update_check, S_UPDATE_AUTO, accent);
+            ui.toggle(right.cut_top(26.0, 2.0), "12-hour clock", st.clock12, S_CLOCK12, accent);
+            ui.toggle(right.cut_top(26.0, 2.0), "Slim down over maximized apps", st.make_room, S_MAKE_ROOM, accent);
+            ui.toggle(right.cut_top(26.0, 8.0), "Check for updates automatically", st.update_check, S_UPDATE_AUTO, accent);
             let (a, b) = half(&mut right, 6.0);
             ui.button(a, if checking { "Checking..." } else { "Check for updates" }, S_UPDATES);
             ui.button(b, "Open data folder", S_DATA);
@@ -1380,6 +1520,8 @@ impl App {
             ui.button(b, "Privacy policy", S_POLICY);
             let (a, _) = half(&mut right, 6.0);
             ui.button_c(a, "Quit WindyLand", S_QUIT, col::RED.with_a(0.18), col::RED);
+            // (the last row's 6 DIP gap is not content)
+            self.settings_room[0] = r.b() - right.y + 6.0;
         } else if page == 2 {
             label(&mut ui, right.cut_top(16.0, 4.0), "Show these panels");
             let rows = (panels.len() + 1) / 2;
@@ -1395,7 +1537,8 @@ impl App {
                     ui.text(name, c, 12.0, fg, Weight::Semi, Align::Left);
                 }
             }
-            ui.text_wrap("A hidden panel is off: no tab, no reminders. Scroll the wheel on the open notch to switch panels.", right, 10.5, col::DIM, Weight::Regular, Align::Left);
+            ui.text_wrap("A hidden panel is off: no tab, no reminders. Scroll the wheel on the open notch to switch panels.", right.cut_top(28.0, 0.0), 10.5, col::DIM, Weight::Regular, Align::Left);
+            self.settings_room[2] = r.b() - right.y;
         } else {
             label(&mut ui, right.cut_top(16.0, 2.0), "Windows notifications");
             ui.toggle(right.cut_top(26.0, 0.0), "Show them in the notch", st.notif_on, S_NOTIF_ON, accent);
@@ -1404,13 +1547,15 @@ impl App {
             ui.button(a, "Windows banners", S_NOTIF_BANNERS);
             let unmute = if muted == 0 { "No muted apps".to_string() } else { format!("Unmute {muted} app{}", if muted == 1 { "" } else { "s" }) };
             ui.button(b, &unmute, S_NOTIF_UNMUTE);
-            ui.toggle(right.cut_top(26.0, 8.0), "Mic & camera dots", st.privacy_dots, S_PRIVACY, accent);
+            ui.toggle(right.cut_top(26.0, 6.0), "Mic & camera dots", st.privacy_dots, S_PRIVACY, accent);
             label(&mut ui, right.cut_top(16.0, 2.0), "Clipboard history");
             ui.toggle(right.cut_top(26.0, 2.0), "Record what I copy", st.clip_on, S_CLIP_ON, accent);
-            let row = right.cut_top(24.0, 0.0);
+            let row = right.cut_top(24.0, 2.0);
             for (i, (cell, m)) in row.columns(3, 6.0).into_iter().zip(ClipMode::ALL).enumerate() {
                 ui.chip(cell, clip_mode_short(m), S_CLIP_MODE + i as u32, st.clip_mode == m, accent);
             }
+            ui.toggle(right.cut_top(26.0, 0.0), "Show what I copy", st.copy_toast, S_COPY_TOAST, accent);
+            self.settings_room[1] = r.b() - right.y;
         }
     }
 
@@ -1446,6 +1591,15 @@ impl App {
                 sound::play(s);
             }
             S_CLIP_ON => self.settings.clip_on = !self.settings.clip_on,
+            S_COPY_TOAST => self.settings.copy_toast = !self.settings.copy_toast,
+            S_CLOCK12 => {
+                self.settings.clock12 = !self.settings.clock12;
+                crate::time::H12.store(self.settings.clock12, std::sync::atomic::Ordering::Relaxed);
+            }
+            S_MAKE_ROOM => {
+                self.settings.make_room = !self.settings.make_room;
+                self.sync_passthrough();
+            }
             i if (S_PAGE..S_PAGE + 3).contains(&i) => self.settings_page = (i - S_PAGE) as u8,
             S_MASCOT_ALWAYS => self.settings.mascot_always = !self.settings.mascot_always,
             i if (S_MASCOT_POS..S_MASCOT_POS + 3).contains(&i) => self.settings.mascot_pos = (i - S_MASCOT_POS) as u8,
@@ -1737,7 +1891,7 @@ impl App {
     /// Pill and Hidden styles: an invisible hover strip along the edge, plus
     /// (Pill) a thin bar that fades out as the notch opens.
     fn draw_bar(&mut self, along: f32, depth: f32) {
-        let pill = self.settings.style == NotchStyle::Pill;
+        let pill = self.look() == NotchStyle::Pill;
         // Alpha of ~1% is invisible but still catches the mouse
         // (fully transparent layered-window pixels are click-through).
         let (za, zd) = if pill { (200.0, 14.0) } else { (280.0, 3.0) };
@@ -1769,7 +1923,7 @@ impl App {
 
     fn draw_collapsed(&mut self, goal: Rect, t: f64) {
         let mouse = self.mouse;
-        let compact = self.settings.style == NotchStyle::Compact;
+        let compact = self.look() == NotchStyle::Compact;
         let vertical = self.settings.edge.vertical();
         let side = self.mascot_side();
         let mood_t = (t - self.mood_since) as f32;
@@ -1879,7 +2033,7 @@ impl App {
             if self.t() - self.last_leave > 0.2 {
                 self.hover_since = self.t();
             }
-            if self.can_hover_open() && self.settings.style.hover_delay() <= 0.0 {
+            if self.can_hover_open() && self.look().hover_delay() <= 0.0 {
                 self.open_from_hover();
             }
         }
@@ -2212,6 +2366,7 @@ impl App {
                 match wp.0 {
                     TIMER_TICK => self.tick(),
                     TIMER_FRAME => self.timer_frame(),
+                    TIMER_POLL => self.poll_cursor(),
                     _ => {}
                 }
                 Some(LRESULT(0))
@@ -2907,6 +3062,18 @@ pub fn selftest() -> String {
             a.settings_page = 0;
             a.settings_open = false;
             out += &format!("{:<4} every button, switch, chip and row has a tooltip {:?}\n", if missing.is_empty() { "OK" } else { "FAIL" }, missing);
+            // Every Settings page fits its panel.
+            a.settings_open = true;
+            for p in 0..3u8 {
+                a.settings_page = p;
+                let tgt = a.target();
+                a.cur = tgt;
+                a.render(tgt, 0.0);
+            }
+            a.settings_page = 0;
+            a.settings_open = false;
+            let room = a.settings_room;
+            out += &format!("{:<4} every Settings page fits (room left {:?})\n", if room.iter().all(|r| *r >= 0.0) { "OK" } else { "FAIL" }, room);
             out += &format!("{:<4} every tab icon has a tooltip {:?}\n", if untipped.is_empty() { "OK" } else { "FAIL" }, untipped);
             a.expanded = false;
         }
@@ -3256,7 +3423,7 @@ pub fn selftest() -> String {
                     tight.push(s);
                 }
             }
-            for s in ["Start with Windows", "Volume overlay", "Check for updates automatically", "Mic & camera dots", "Record what I copy", "Show them in the notch", "Include message text"] {
+            for s in ["Start with Windows", "Volume overlay", "Check for updates automatically", "Mic & camera dots", "Record what I copy", "Show them in the notch", "Include message text", "12-hour clock", "Slim down over maximized apps", "Show what I copy"] {
                 if a.gfx.measure(s, 12.5, Weight::Regular) > right_w - 16.0 - 42.0 {
                     tight.push(s);
                 }
@@ -3361,7 +3528,7 @@ pub fn selftest() -> String {
                     let diff = ((got[k] * 60.0).round() as i64 - (w[0] * 60 + w[1])).abs();
                     worst = worst.max(diff);
                     if diff > 1 {
-                        bad.push(format!("{y}-{m}-{d} {} {} vs {}", prayer::NAMES[k], prayer::hhmm(got[k]), want[k]));
+                        bad.push(format!("{y}-{m}-{d} {} {} vs {}", prayer::NAMES[k], prayer::hhmm24(got[k]), want[k]));
                     }
                 }
             }
@@ -3691,6 +3858,176 @@ pub fn selftest() -> String {
         }
         // AI agents: hook events -> states, toasts and the live wing; the
         // hook process itself; connecting the agents in a scratch home.
+        // 12-hour clock (default) and 24-hour.
+        {
+            use crate::time::{clock, clock_full, fmt_mod, H12};
+            let o = std::sync::atomic::Ordering::Relaxed;
+            let was = H12.load(o);
+            H12.store(true, o);
+            let t12 = clock(16, 20) == "4:20"
+                && clock_full(16, 20) == "4:20 PM"
+                && clock_full(0, 5) == "12:05 AM"
+                && clock_full(12, 0) == "12:00 PM"
+                && fmt_mod(9 * 60 + 30) == "9:30 AM"
+                && crate::modules::prayer::hhmm(15.0 + 47.0 / 60.0) == "3:47 PM";
+            H12.store(false, o);
+            let t24 = clock(16, 20) == "16:20" && clock_full(9, 5) == "09:05" && fmt_mod(21 * 60) == "21:00" && crate::modules::prayer::hhmm(15.0 + 47.0 / 60.0) == "15:47";
+            H12.store(was, o);
+            let default_on = crate::store::Settings::load().clock12 || crate::store::read("settings.txt").contains("clock12=1");
+            out += &format!("{:<4} clock: 12-hour by default (4:20 PM), 24-hour when switched off ({t12}, {t24}, {default_on})\n", if t12 && t24 && default_on { "OK" } else { "FAIL" });
+            let before = a.settings.clock12;
+            a.settings_action(S_CLOCK12);
+            let off = !a.settings.clock12 && !crate::time::h12() && crate::store::read("settings.txt").contains("clock12=0");
+            a.settings_action(S_CLOCK12);
+            let on = a.settings.clock12 == !before || a.settings.clock12 == before;
+            a.settings.clock12 = before;
+            H12.store(before, o);
+            a.settings.save();
+            out += &format!("{:<4} Settings > General: 12-hour clock switch applies at once and saves\n", if off && on { "OK" } else { "FAIL" });
+        }
+        // Make room: over a maximized window the Full notch becomes a thin
+        // click-through bar; resting on it opens the notch.
+        {
+            let o = std::sync::atomic::Ordering::Relaxed;
+            let saved = (a.settings.style, a.settings.make_room, a.expanded, a.hover_block);
+            a.settings.style = NotchStyle::Full;
+            a.settings.make_room = true;
+            a.expanded = false;
+            a.toast = None;
+            a.queue.clear();
+            a.hover_block = false;
+            let full = a.target();
+            MAXIMIZED_OVERRIDE.store(1, o);
+            a.update_make_room();
+            let slim = a.target();
+            let ex = unsafe { GetWindowLongPtrW(a.hwnd, GWL_EXSTYLE) } & WS_EX_TRANSPARENT.0 as isize != 0;
+            let yielded = a.look() == NotchStyle::Pill && slim.1 == 0.0 && full.1 > 0.0 && a.passthrough && ex;
+            // A toast must be clickable.
+            a.push_toast(Toast::new("t", glyph::BELL, col::GREEN, "Test", "toast"));
+            a.sync_passthrough();
+            let toast_clicks = !a.passthrough;
+            a.toast = None;
+            a.queue.clear();
+            a.sync_passthrough();
+            // Rest the cursor on the bar: opens after the hover delay.
+            let zone = a.edge_rect(220.0, 16.0);
+            a.poll_at(zone.cx(), zone.cy());
+            let not_yet = !a.expanded;
+            std::thread::sleep(std::time::Duration::from_millis(360));
+            a.poll_at(zone.cx(), zone.cy());
+            let opened = a.expanded && !a.passthrough;
+            a.expanded = false;
+            a.sync_passthrough();
+            // Away from the bar nothing opens.
+            a.poll_at(zone.cx(), zone.b() + 200.0);
+            std::thread::sleep(std::time::Duration::from_millis(360));
+            a.poll_at(zone.cx(), zone.b() + 200.0);
+            let stays = !a.expanded;
+            // Setting off: back to the full notch, clickable.
+            a.settings_action(S_MAKE_ROOM);
+            let off = a.look() == NotchStyle::Full && !a.passthrough && crate::store::read("settings.txt").contains("make_room=0");
+            a.settings_action(S_MAKE_ROOM);
+            MAXIMIZED_OVERRIDE.store(2, o);
+            a.update_make_room();
+            let back = a.look() == NotchStyle::Full && !a.passthrough && unsafe { GetWindowLongPtrW(a.hwnd, GWL_EXSTYLE) } & WS_EX_TRANSPARENT.0 as isize == 0;
+            (a.settings.style, a.settings.make_room, a.expanded, a.hover_block) = saved;
+            a.settings.save();
+            out += &format!(
+                "{:<4} make room: thin click-through bar over a maximized window, toasts still clickable, rest on it to open, setting off restores {:?}\n",
+                if yielded && toast_clicks && not_yet && opened && stays && off && back { "OK" } else { "FAIL" },
+                (yielded, toast_clicks, not_yet, opened, stays, off, back)
+            );
+            let real = unsafe {
+                let fg = GetForegroundWindow();
+                !fg.0.is_null() && IsZoomed(fg).as_bool()
+            };
+            out += &format!("INFO foreground window maximized right now: {real}\n");
+        }
+        // Music: a refused prev/next falls back to the media key.
+        out += &format!("{:<4} music: prev/next/play fall back to the media keys when the player refuses\n", if crate::modules::music::test_fallback() { "OK" } else { "FAIL" });
+        // Copy toast ("Show what I copy"): off by default; text, picture and
+        // files previews; a repeat isn't shown twice; nothing is recorded.
+        if let Some(ci) = find(a, "Clipboard") {
+            use crate::modules::clipboard as cb;
+            let saved = (a.settings.copy_toast, a.settings.clip_on);
+            let default_off = !crate::store::Settings::load().copy_toast || !crate::store::read("settings.txt").contains("copy_toast=1");
+            let items0 = a.modules[ci].debug_state();
+            let feed = |a: &mut App, id: u32| {
+                a.toast = None;
+                a.queue.clear();
+                a.call(ci, |m, c| m.action(id, (0.0, 0.0), c));
+                a.call(ci, |m, c| m.tick(c));
+            };
+            let shown = |a: &App| a.toast.as_ref().map(|t| t.0.clone()).or_else(|| a.queue.front().cloned()).filter(|t| t.key == "copy");
+            a.settings.copy_toast = false;
+            feed(a, cb::A_TEST_COPY_TEXT);
+            let quiet_off = shown(a).is_none();
+            a.settings.copy_toast = true;
+            a.settings.clip_on = false;
+            feed(a, cb::A_TEST_COPY_TEXT);
+            let text = shown(a).map_or(false, |t| t.title == "Copied" && t.sub.starts_with("Meeting moved to 4:30 pm") && t.right == "2 lines");
+            feed(a, cb::A_TEST_COPY_TEXT);
+            let no_repeat = shown(a).is_none();
+            feed(a, cb::A_TEST_COPY_IMAGE);
+            let pic = shown(a).map_or(false, |t| t.title == "Copied a picture" && t.sub == "1600 x 1000" && t.image.as_ref().map_or(false, |i| i.0 == i.1 && i.0 == 40));
+            feed(a, cb::A_TEST_COPY_FILES);
+            let files = shown(a).map_or(false, |t| t.title == "Copied 2 files" && t.sub.contains("Report final.docx") && t.sub.contains("Logo.png"));
+            let kept_nothing = a.modules[ci].debug_state().split(' ').next() == items0.split(' ').next();
+            out += &snap(a, "copy toast");
+            a.toast = None;
+            a.queue.clear();
+            (a.settings.copy_toast, a.settings.clip_on) = saved;
+            a.settings.save();
+            out += &format!(
+                "{:<4} copy toast: off by default, previews text (2 lines), a picture and files, no repeat, keeps nothing {:?}\n",
+                if default_off && quiet_off && text && no_repeat && pic && files && kept_nothing { "OK" } else { "FAIL" },
+                (default_off, quiet_off, text, no_repeat, pic, files, kept_nothing)
+            );
+        }
+        // Screenshot / Pick from screen: the notch window is hidden while
+        // the screen is frozen and comes back after (a tiny off-screen
+        // stand-in window plays the notch).
+        {
+            use crate::modules::tools::picker;
+            let stand_in = unsafe {
+                CreateWindowExW(WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE, w!("STATIC"), w!(""), WS_POPUP, -32000, -32000, 4, 4, None, None, None, None).unwrap_or_default()
+            };
+            unsafe {
+                let _ = ShowWindow(stand_in, SW_SHOWNOACTIVATE);
+            }
+            let shown_before = unsafe { IsWindowVisible(stand_in).as_bool() };
+            let snap = picker::capture_without(stand_in);
+            let hidden_during = unsafe { !IsWindowVisible(stand_in).as_bool() };
+            picker::show_app(stand_in);
+            let back = unsafe { IsWindowVisible(stand_in).as_bool() };
+            // Not hidden by us: left alone.
+            unsafe {
+                let _ = ShowWindow(stand_in, SW_HIDE);
+            }
+            picker::hide_app(stand_in);
+            picker::show_app(stand_in);
+            let left_alone = unsafe { !IsWindowVisible(stand_in).as_bool() };
+            unsafe {
+                let _ = DestroyWindow(stand_in);
+            }
+            out += &format!(
+                "{:<4} screenshot and color picker hide the notch while the screen is frozen, then bring it back {:?}\n",
+                if shown_before && snap.is_some() && hidden_during && back && left_alone { "OK" } else { "FAIL" },
+                (shown_before, snap.is_some(), hidden_during, back, left_alone)
+            );
+            // Clicking Screenshot closes the panel and it stays closed with
+            // the cursor still on the button.
+            if let Some(sh) = find(a, "Shelf") {
+                a.hover_block = false;
+                a.expanded = true;
+                a.tab = sh;
+                a.call(sh, |m, c| m.action(crate::modules::shelf::A_TEST_NO_OVERLAY, (0.0, 0.0), c));
+                a.call(sh, |m, c| m.action(crate::modules::shelf::A_SNIP, (0.0, 0.0), c));
+                let blocked = !a.expanded && a.hover_block && !a.can_hover_open();
+                a.hover_block = false;
+                out += &format!("{:<4} Screenshot closes the panel and it doesn't reopen under the cursor\n", if blocked { "OK" } else { "FAIL" });
+            }
+        }
         if let Some(ai) = find(a, "AI Agents") {
             use crate::modules::agents::{self as ag, Link};
             use serde_json::json;
@@ -4804,6 +5141,7 @@ pub fn render_docs(dir: &std::path::Path) -> String {
             ("toast_caps", Toast::new("caps", glyph::CAPS, col::ACCENT, "Caps Lock", "On")),
             ("toast_bt", Toast::new("bt", glyph::HEADPHONE, col::BLUE, "Earbuds", "Connected")),
             ("toast_lang", Toast::new("lang", glyph::KEYBOARD, col::BLUE, "Bangla (Bangladesh)", "Keyboard language").right("BN")),
+            ("toast_copy", crate::modules::clipboard::copy_toast(&crate::modules::clipboard::Content::Text("Meeting moved to 4:30 pm, same room.\nBring the printed slides.".into()))),
             ("toast_agent", Toast::new("agent", crate::modules::agents::ICON, col::ACCENT, "Hermes needs you", "desktop \u{00B7} Wants your OK to run a command")),
             ("toast_agent_done", Toast::new("agent", crate::modules::agents::ICON, col::GREEN, "Claude Code finished", "WindyLand \u{00B7} took 4m 12s")),
             (
@@ -5152,6 +5490,24 @@ pub fn render_demo(dir: &std::path::Path) -> String {
             d.wait(2.4);
             d.a.toast = None;
         }
+        if let Some(ci) = find(&d.a, "Clipboard") {
+            d.sub("Copy something: a small preview shows what you copied (optional)");
+            let was = d.a.settings.copy_toast;
+            d.a.settings.copy_toast = true;
+            d.a.call(ci, |m, c| m.action(crate::modules::clipboard::A_TEST_COPY_TEXT, (0.0, 0.0), c));
+            d.a.call(ci, |m, c| m.tick(c));
+            d.wait(2.2);
+            d.a.toast = None;
+            d.a.queue.clear();
+            d.a.settings.copy_toast = was;
+        }
+        d.sub("Over a maximized window it slims down, so your tabs stay clickable");
+        MAXIMIZED_OVERRIDE.store(1, std::sync::atomic::Ordering::Relaxed);
+        d.a.update_make_room();
+        d.wait(2.0);
+        MAXIMIZED_OVERRIDE.store(2, std::sync::atomic::Ordering::Relaxed);
+        d.a.update_make_room();
+        d.wait(0.5);
         d.sub("Charging, battery, volume, Wi-Fi and Bluetooth");
         d.a.push_toast(Toast::new("power", glyph::CHARGING, col::GREEN, "Charging", "Charger connected").right("70%").progress(0.7).secs(1.8));
         d.wait(2.2);
@@ -5178,6 +5534,9 @@ pub fn render_demo(dir: &std::path::Path) -> String {
         d.wait(0.5);
         d.click_at(SETTINGS, S_MASCOT_POS, 0.4);
         d.wait(0.6);
+        d.click_at(SETTINGS, S_PAGE, 0.4);
+        d.sub("12 or 24-hour clock, and a slim notch over maximized apps");
+        d.wait(1.6);
         d.click_at(SETTINGS, S_PAGE + 1, 0.5);
         d.sub("Notifications, mic dots and clipboard: all opt-in");
         d.wait(1.6);
@@ -5251,6 +5610,9 @@ fn settings_tip(id: u32) -> &'static str {
         S_NOTIF_UNMUTE => "Show the apps you muted again",
         S_PRIVACY => "A dot while an app uses the mic or camera",
         S_CLIP_ON => "Keep a history of what you copy",
+        S_COPY_TOAST => "A small toast shows what you just copied (nothing is kept)",
+        S_CLOCK12 => "4:20 PM instead of 16:20",
+        S_MAKE_ROOM => "Over a maximized window the notch slims to a thin bar you can click through, so browser tabs stay reachable",
         S_CLIP_MODE => "Record copied text only",
         71 => "Record copied text and files",
         72 => "Record text, files and pictures",

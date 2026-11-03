@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.1.20
+
+- Makes room for maximized windows (Settings > General, on by default):
+  with a maximized window under it, the notch slims to a thin bar that
+  clicks pass through, so browser tabs under it stay reachable. Rest the
+  mouse on the bar to open it; alerts still show. Fixes #2.
+- 12-hour clock by default (4:20 PM), with a switch for 24-hour in
+  Settings > General. Applies to the notch, reminders, prayer times, time
+  zones and the timer.
+- Show what I copy (Settings > Privacy, off by default): a small toast
+  previews each copy, Android style: the text, the file names, or a
+  thumbnail of the picture. Works with clipboard history off; nothing is
+  kept, and password-manager copies stay private.
+- Screenshot and Pick from screen: the notch now hides completely while the
+  screen is frozen, and the panel no longer reopens under the cursor, so
+  nothing covers the screen you're capturing.
+- Music: when a player turns down previous/next (or play/pause), WindyLand
+  presses the matching media key instead, which most players and browsers
+  still act on. The buttons dim when the player says it can't skip.
+
 ## 0.1.19
 
 - AI agents tab: connect Hermes, Claude Code and Codex CLI with one switch, and the

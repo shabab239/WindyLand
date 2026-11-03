@@ -18,7 +18,7 @@ use windows::Win32::UI::HiDpi::GetDpiForWindow;
 use windows::Win32::UI::Input::KeyboardAndMouse::*;
 use windows::Win32::UI::WindowsAndMessaging::*;
 
-use crate::modules::tools::picker::{capture, Snap};
+use crate::modules::tools::picker::{capture_without, show_app, Snap};
 
 /// A captured picture: top-down BGRA, fully opaque.
 #[derive(Clone)]
@@ -94,7 +94,7 @@ pub fn start(app: HWND) -> bool {
     if active() || crate::modules::tools::picker::active() {
         return true;
     }
-    let Some(snap) = capture() else { return false };
+    let Some(snap) = capture_without(app) else { return false };
     unsafe {
         static REG: std::sync::Once = std::sync::Once::new();
         let Ok(hinst) = GetModuleHandleW(None) else { return false };
@@ -127,6 +127,7 @@ pub fn start(app: HWND) -> bool {
             SelectObject(dim, dim_old);
             let _ = DeleteObject(dim_bmp);
             let _ = DeleteDC(dim);
+            show_app(app);
             return false;
         };
         let scale = GetDpiForWindow(hwnd) as f32 / 96.0;
@@ -151,6 +152,7 @@ fn finish(shot: Option<Shot>) {
         let _ = DeleteObject(ov.dim_bmp);
         let _ = DeleteDC(ov.dim);
         let _ = DeleteObject(ov.font);
+        show_app(HWND(ov.app as *mut _));
         *RESULT.lock().unwrap() = Some(shot);
         let _ = PostMessageW(HWND(ov.app as *mut _), crate::app::WM_APP_WAKE, WPARAM(0), LPARAM(0));
     }

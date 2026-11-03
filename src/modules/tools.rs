@@ -657,6 +657,44 @@ pub mod picker {
         TRUE
     }
 
+    /// Set while the notch's window is hidden for a screen capture.
+    static APP_HIDDEN: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+    /// Hide the notch's own window before freezing the screen, so neither
+    /// the closing panel nor the closed notch ends up in the picture (or
+    /// covers part of it). `show_app` brings it back.
+    pub fn hide_app(app: HWND) {
+        unsafe {
+            if app.0.is_null() || !IsWindowVisible(app).as_bool() {
+                return;
+            }
+            let _ = ShowWindow(app, SW_HIDE);
+            APP_HIDDEN.store(true, std::sync::atomic::Ordering::SeqCst);
+            // Let the compositor drop it from the screen before reading it.
+            let _ = windows::Win32::Graphics::Dwm::DwmFlush();
+            std::thread::sleep(std::time::Duration::from_millis(30));
+            let _ = windows::Win32::Graphics::Dwm::DwmFlush();
+        }
+    }
+
+    pub fn show_app(app: HWND) {
+        if APP_HIDDEN.swap(false, std::sync::atomic::Ordering::SeqCst) && !app.0.is_null() {
+            unsafe {
+                let _ = ShowWindow(app, SW_SHOWNOACTIVATE);
+            }
+        }
+    }
+
+    /// Screenshot of all monitors without the notch in it.
+    pub fn capture_without(app: HWND) -> Option<Snap> {
+        hide_app(app);
+        let snap = capture();
+        if snap.is_none() {
+            show_app(app);
+        }
+        snap
+    }
+
     /// Screenshot of all monitors.
     pub fn capture() -> Option<Snap> {
         unsafe {
@@ -725,7 +763,7 @@ pub mod picker {
         if active() || crate::modules::snip::active() {
             return true;
         }
-        let Some(snap) = capture() else { return false };
+        let Some(snap) = capture_without(app) else { return false };
         unsafe {
             static REG: std::sync::Once = std::sync::Once::new();
             let Ok(hinst) = GetModuleHandleW(None) else { return false };
@@ -753,6 +791,7 @@ pub mod picker {
                 hinst,
                 None,
             ) else {
+                show_app(app);
                 return false;
             };
             let scale = GetDpiForWindow(hwnd) as f32 / 96.0;
@@ -776,6 +815,7 @@ pub mod picker {
             let _ = DestroyWindow(ov.hwnd);
             let _ = DeleteObject(ov.font);
             let _ = DeleteObject(ov.small);
+            show_app(HWND(ov.app as *mut _));
             *RESULT.lock().unwrap() = Some(pick);
             let _ = PostMessageW(HWND(ov.app as *mut _), crate::app::WM_APP_WAKE, WPARAM(0), LPARAM(0));
         }
@@ -1345,7 +1385,7 @@ impl Tools {
         let name = self.tz_base.map_or("This PC", |i| CITIES[i].0);
         let nw = ui.measure(name, 13.0, Weight::Semi) + 10.0;
         ui.text(name, row.cut_left(nw, 0.0), 13.0, col::TEXT, Weight::Semi, Align::Left);
-        let time = format!("{:02}:{:02}", base.wHour, base.wMinute);
+        let time = crate::time::clock_full(base.wHour as u32, base.wMinute as u32);
         let tw = ui.measure(&time, 20.0, Weight::Semi) + 10.0;
         ui.text(&time, row.cut_left(tw, 0.0), 20.0, ACCENT, Weight::Semi, Align::Left);
         let off = if self.tz_offset == 0 { String::new() } else { format!(" ({:+} h)", self.tz_offset / 60) };
@@ -1359,7 +1399,9 @@ impl Tools {
             let hov = ui.hovered(cell);
             ui.fill_rr(cell, 8.0, if sel { ACCENT.with_a(0.22) } else if hov { col::BTN_HOVER } else { col::BTN });
             let mut c = cell.inset_xy(8.0, 2.0);
-            ui.text(city, c.cut_top(13.0, 0.0), 10.5, col::DIM, Weight::Regular, Align::Left);
+            // City on top with the difference on its right; the time below.
+            let top = c.cut_top(13.0, 0.0);
+            ui.text(city, top, 10.5, col::DIM, Weight::Regular, Align::Left);
             if let Some(t) = tz::local(Some(key), utc) {
                 let diff_min = (tz::ft(&t) - base_ft) / 600_000_000;
                 let day = (t.wYear, t.wMonth, t.wDay).cmp(&(base.wYear, base.wMonth, base.wDay));
@@ -1375,10 +1417,21 @@ impl Tools {
                 } else {
                     format!("{:+.1}h", diff_min as f64 / 60.0)
                 };
-                let tt = format!("{:02}:{:02}", t.wHour, t.wMinute);
-                let tw = ui.measure(&tt, 13.0, Weight::Semi) + 4.0;
+                // "4:20" big with a small "PM" (or "16:20"), to fit the cell.
+                let tt = crate::time::clock(t.wHour as u32, t.wMinute as u32);
+                let tw = ui.measure(&tt, 13.0, Weight::Semi) + 2.0;
                 ui.text(&tt, c.cut_left(tw, 0.0), 13.0, col::TEXT, Weight::Semi, Align::Left);
-                ui.text(&format!("{diff}{tag}"), c, 9.5, col::FAINT, Weight::Regular, Align::Right);
+                if crate::time::h12() {
+                    let ap = if t.wHour < 12 { "AM" } else { "PM" };
+                    let aw = ui.measure(ap, 9.0, Weight::Semi) + 4.0;
+                    ui.text(ap, c.cut_left(aw, 0.0), 9.0, col::DIM, Weight::Semi, Align::Left);
+                }
+                let note = format!("{diff}{tag}");
+                if ui.measure(city, 10.5, Weight::Regular) + ui.measure(&note, 9.5, Weight::Regular) + 4.0 <= top.w {
+                    ui.text(&note, top, 9.5, col::FAINT, Weight::Regular, Align::Right);
+                } else {
+                    ui.text(&note, c, 9.5, col::FAINT, Weight::Regular, Align::Right);
+                }
             }
             ui.hit_tip(cell, A_TZ_CITY + k as u32, "Compare from this city");
         }

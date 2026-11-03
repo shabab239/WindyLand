@@ -112,6 +112,9 @@ fn main() {
         let args: Vec<String> = std::env::args().collect();
         if args.iter().any(|a| a == "--selftest" || a == "--render-demo" || a == "--render-docs") {
             modules::agents::ISOLATED.store(true, std::sync::atomic::Ordering::Relaxed);
+            // His screen may have a maximized window open: renders and tests
+            // assume none unless a test says otherwise.
+            app::MAXIMIZED_OVERRIDE.store(2, std::sync::atomic::Ordering::Relaxed);
         }
         if let Some(i) = args.iter().position(|a| a == "--render-demo") {
             time::DEMO.store(true, std::sync::atomic::Ordering::Relaxed);

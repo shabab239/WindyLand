@@ -1,6 +1,6 @@
 # Privacy policy
 
-_Last updated: 2 November 2026. Applies to WindyLand 0.1.19 and later._
+_Last updated: 4 November 2026. Applies to WindyLand 0.1.20 and later._
 
 WindyLand is a free, open-source app that runs on your PC. It has no
 accounts, no ads, no analytics and no telemetry. The developer receives no
@@ -32,6 +32,9 @@ to delete this folder too.
 - **Clipboard history** (off until you turn it on): what you copy. Unpinned
   entries and all pictures live only in memory and are gone when WindyLand
   exits. Copies that password managers mark as private are never recorded.
+- **Show what I copy** (off until you turn it on): reads each new copy only
+  to show a short preview in the notch for about two seconds. Nothing is
+  stored, and copies that password managers mark as private are skipped.
 - **Windows notifications** (off until you turn it on): the app name, icon
   and text of notifications in Windows' Notification Center, to show them in
   the notch. They are not stored or sent anywhere.

@@ -37,6 +37,9 @@ pub struct MediaInfo {
     pub dur: f64,
     pub art: Option<Arc<(u32, u32, Vec<u8>)>>,
     pub art_ver: u64,
+    /// The player says it can skip back / forward right now.
+    pub can_prev: bool,
+    pub can_next: bool,
 }
 
 impl MediaInfo {
@@ -53,11 +56,53 @@ impl MediaInfo {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq)]
 enum Cmd {
     Toggle,
     Next,
     Prev,
     Seek(f64),
+}
+
+const VK_MEDIA_NEXT: u16 = 0xB0;
+const VK_MEDIA_PREV: u16 = 0xB1;
+const VK_MEDIA_PLAY_PAUSE: u16 = 0xB3;
+
+/// When the player turns a command down (or the call fails), press the
+/// matching media key instead: many players (and browsers, for web
+/// players) still act on the key. Seeking has no key.
+fn fallback_key(cmd: Cmd, accepted: bool) -> Option<u16> {
+    if accepted {
+        return None;
+    }
+    match cmd {
+        Cmd::Next => Some(VK_MEDIA_NEXT),
+        Cmd::Prev => Some(VK_MEDIA_PREV),
+        Cmd::Toggle => Some(VK_MEDIA_PLAY_PAUSE),
+        Cmd::Seek(_) => None,
+    }
+}
+
+/// Self-test: the fallback rules.
+pub fn test_fallback() -> bool {
+    fallback_key(Cmd::Next, true).is_none()
+        && fallback_key(Cmd::Next, false) == Some(VK_MEDIA_NEXT)
+        && fallback_key(Cmd::Prev, false) == Some(VK_MEDIA_PREV)
+        && fallback_key(Cmd::Toggle, false) == Some(VK_MEDIA_PLAY_PAUSE)
+        && fallback_key(Cmd::Seek(3.0), false).is_none()
+}
+
+fn press_media_key(vk: u16) {
+    use windows::Win32::UI::Input::KeyboardAndMouse::*;
+    let key = |up: bool| INPUT {
+        r#type: INPUT_KEYBOARD,
+        Anonymous: INPUT_0 {
+            ki: KEYBDINPUT { wVk: VIRTUAL_KEY(vk), wScan: 0, dwFlags: KEYEVENTF_EXTENDEDKEY | if up { KEYEVENTF_KEYUP } else { KEYBD_EVENT_FLAGS(0) }, time: 0, dwExtraInfo: 0 },
+        },
+    };
+    unsafe {
+        SendInput(&[key(false), key(true)], std::mem::size_of::<INPUT>() as i32);
+    }
 }
 
 #[derive(Clone)]
@@ -90,13 +135,20 @@ fn spawn_media(shared: Arc<Mutex<MediaInfo>>, rx: Receiver<Cmd>, hwnd: isize) {
         loop {
             match rx.recv_timeout(Duration::from_millis(1000)) {
                 Ok(cmd) => {
-                    if let Ok(s) = mgr.GetCurrentSession() {
-                        let _ = match cmd {
+                    // The player can refuse ("can't skip right now") or
+                    // not answer; fall back to the media key then.
+                    let accepted = match mgr.GetCurrentSession() {
+                        Ok(s) => match cmd {
                             Cmd::Toggle => s.TryTogglePlayPauseAsync().and_then(|o| o.get()),
                             Cmd::Next => s.TrySkipNextAsync().and_then(|o| o.get()),
                             Cmd::Prev => s.TrySkipPreviousAsync().and_then(|o| o.get()),
                             Cmd::Seek(t) => s.TryChangePlaybackPositionAsync((t * 1e7) as i64).and_then(|o| o.get()),
-                        };
+                        }
+                        .unwrap_or(false),
+                        Err(_) => false,
+                    };
+                    if let Some(vk) = fallback_key(cmd, accepted) {
+                        press_media_key(vk);
                     }
                     std::thread::sleep(Duration::from_millis(180));
                 }
@@ -163,6 +215,18 @@ unsafe fn poll(mgr: &GlobalSystemMediaTransportControlsSessionManager, shared: &
     }
     if let Ok(pb) = s.GetPlaybackInfo() {
         info.playing = pb.PlaybackStatus().map(|st| st == GlobalSystemMediaTransportControlsSessionPlaybackStatus::Playing).unwrap_or(false);
+        // Unknown counts as available: the button still tries (and falls
+        // back to the media key).
+        match pb.Controls() {
+            Ok(c) => {
+                info.can_prev = c.IsPreviousEnabled().unwrap_or(true);
+                info.can_next = c.IsNextEnabled().unwrap_or(true);
+            }
+            Err(_) => {
+                info.can_prev = true;
+                info.can_next = true;
+            }
+        }
     }
     // Some players report a stale timeline; keep extrapolating smoothly.
     if info.playing && prev.key() == info.key() && (prev.position() - info.position()).abs() < 2.5 {
@@ -505,10 +569,13 @@ impl Music {
         ui.icon_btn(lyr, glyph::LYRICS, A_LYRICS, 14.0, fg, bg, if self.show_lyrics { "Hide lyrics" } else { "Show lyrics" });
         let mid = ctl.centered(32.0 * 3.0 + 24.0, 32.0);
         let cells = mid.columns(3, 12.0);
-        ui.icon_btn(cells[0], glyph::PREV, A_PREV, 15.0, col::TEXT, None, "Previous");
+        // Dimmed when the player says it can't skip (a single video, the
+        // first track); a click still tries.
+        let dim = |ok: bool| if ok || crate::time::demo() { col::TEXT } else { col::FAINT };
+        ui.icon_btn(cells[0], glyph::PREV, A_PREV, 15.0, dim(info.can_prev), None, if info.can_prev { "Previous" } else { "Previous (this player may not allow it now)" });
         let (g, tip) = if info.playing { (glyph::PAUSE, "Pause") } else { (glyph::PLAY, "Play") };
         ui.icon_btn(cells[1], g, A_TOGGLE, 17.0, col::TEXT, None, tip);
-        ui.icon_btn(cells[2], glyph::NEXT, A_NEXT, 15.0, col::TEXT, None, "Next");
+        ui.icon_btn(cells[2], glyph::NEXT, A_NEXT, 15.0, dim(info.can_next), None, if info.can_next { "Next" } else { "Next (this player may not allow it now)" });
     }
 
     fn draw_lyrics(&mut self, ui: &mut Ui, r: Rect) {
@@ -787,6 +854,8 @@ fn demo_media() -> MediaInfo {
         dur: 213.0,
         art,
         art_ver: 1,
+        can_prev: true,
+        can_next: true,
     }
 }
 
