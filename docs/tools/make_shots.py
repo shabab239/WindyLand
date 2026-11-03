@@ -158,6 +158,8 @@ def make(data, run, read_raw, wallpaper, fake_windows, rounded_mask, font):
         for k, (raw, label) in enumerate(row):
             t = tile(raw, label, col2, small_h, 0.4 + r * 0.9 + k * 0.33)
             collage.paste(t, (k * (col2 + gap), big_h + gap + r * (small_h + gap)), rounded_mask(col2, small_h, 22))
+    # The website shows the collage alone (its own title is above it).
+    collage.save(IMAGES / "hero-collage.png")
     hero = Image.new("RGBA", (W, total_h + 2 * PAD), BG + (255,))
     hero.alpha_composite(collage, (PAD, PAD))
     page_img = page_chips(hero, "WindyLand", "A Dynamic Island for Windows: music, AI agents, tools, reminders and more. Free and open source.",
