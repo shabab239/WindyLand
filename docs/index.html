@@ -1,16 +1,27 @@
 <!doctype html>
-<html lang="en">
+<html lang="bn">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>WindyLand: a Dynamic Island for Windows</title>
-<meta name="description" content="Free, open-source Dynamic Island style notch for Windows 10 and 11. Music with synced lyrics, AI agent status, color picker, calculator, clipboard history, reminders and more.">
+<title>WindyLand: Windows এর জন্য Dynamic Island</title>
+<meta name="description" content="Windows 10 আর 11 এর জন্য ফ্রি, open source Dynamic Island. Free, open-source Dynamic Island style notch for Windows: music with synced lyrics, AI agent status, color picker, calculator, clipboard history, reminders and more.">
 <meta property="og:title" content="WindyLand: a Dynamic Island for Windows">
 <meta property="og:description" content="Free and open source. Music with lyrics, AI agents, tools, clipboard, reminders and more, in a small notch at the edge of your screen.">
 <meta property="og:image" content="https://shabab239.github.io/WindyLand/images/hero.png">
 <meta property="og:url" content="https://shabab239.github.io/WindyLand/">
 <meta name="twitter:card" content="summary_large_image">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect x='3' y='10' width='26' height='12' rx='6' fill='%23111'/><circle cx='22' cy='16' r='3' fill='%23ff9f1c'/></svg>">
+<script>
+  // Pick the language before anything paints: ?lang=en|bn, then the saved
+  // choice, then Bangla.
+  (function () {
+    var q = new URLSearchParams(location.search).get("lang");
+    var saved = null;
+    try { saved = localStorage.getItem("wl-lang"); } catch (e) {}
+    var l = q === "en" || q === "bn" ? q : (saved || "bn");
+    document.documentElement.lang = l === "en" ? "en" : "bn";
+  })();
+</script>
 <style>
   :root {
     --bg: #0d0f14;
@@ -27,36 +38,42 @@
     margin: 0;
     background: var(--bg);
     color: var(--text);
-    font: 16px/1.6 "Segoe UI Variable", "Segoe UI", system-ui, -apple-system, sans-serif;
+    font: 16px/1.6 "Segoe UI Variable", "Segoe UI", "Nirmala UI", "Noto Sans Bengali", system-ui, -apple-system, sans-serif;
   }
+  html[lang="bn"] body { line-height: 1.7; }
+  /* The page is written in Bangla; hide it until English is swapped in. */
+  html[lang="en"]:not(.ready) [data-i18n] { visibility: hidden; }
   a { color: var(--accent); text-decoration: none; }
   a:hover { text-decoration: underline; }
   img { max-width: 100%; height: auto; display: block; }
   .wrap { max-width: 1100px; margin: 0 auto; padding: 0 22px; }
 
-  nav { display: flex; align-items: center; justify-content: space-between; padding: 18px 0; }
+  nav { display: flex; align-items: center; justify-content: space-between; padding: 18px 0; gap: 12px; }
   .brand { display: flex; align-items: center; gap: 10px; font-weight: 700; font-size: 18px; color: var(--text); }
   .brand .pill { width: 34px; height: 14px; border-radius: 7px; background: #000; border: 1px solid #333; position: relative; }
   .brand .pill::after { content: ""; position: absolute; right: 3px; top: 3px; width: 6px; height: 6px; border-radius: 50%; background: var(--accent); }
-  nav .links { display: flex; gap: 20px; font-size: 15px; }
+  nav .links { display: flex; align-items: center; gap: 20px; font-size: 15px; }
   nav .links a { color: var(--dim); }
   nav .links a:hover { color: var(--text); text-decoration: none; }
+  .lang { display: inline-flex; border: 1px solid var(--line); border-radius: 999px; overflow: hidden; }
+  .lang button { background: none; border: 0; color: var(--dim); font: inherit; font-size: 14px; padding: 5px 12px; cursor: pointer; }
+  .lang button[aria-pressed="true"] { background: var(--card); color: var(--text); font-weight: 600; }
 
   header { text-align: center; padding: 40px 0 28px; }
-  h1 { font-size: clamp(34px, 6vw, 58px); line-height: 1.1; margin: 0 0 16px; letter-spacing: -0.02em; }
-  .lead { font-size: clamp(17px, 2.2vw, 20px); color: var(--dim); max-width: 720px; margin: 0 auto 30px; }
+  h1 { font-size: clamp(34px, 6vw, 58px); line-height: 1.2; margin: 0 0 16px; }
+  .lead { font-size: clamp(17px, 2.2vw, 20px); color: var(--dim); max-width: 760px; margin: 0 auto 30px; }
 
   .dl { display: inline-flex; align-items: center; gap: 12px; background: var(--accent); color: var(--accent-ink);
         font-weight: 700; font-size: 19px; padding: 16px 30px; border-radius: 14px; box-shadow: 0 8px 30px rgba(255, 159, 28, .25); }
   .dl:hover { text-decoration: none; filter: brightness(1.06); }
-  .dl svg { width: 22px; height: 22px; }
+  .dl svg { width: 22px; height: 22px; flex: none; }
   .meta { color: var(--dim); font-size: 14px; margin-top: 12px; }
   .meta a { color: var(--dim); text-decoration: underline; }
 
   .hero { margin: 36px auto 0; border-radius: 22px; }
 
   section { padding: 56px 0 8px; }
-  h2 { font-size: clamp(26px, 3.6vw, 36px); margin: 0 0 8px; letter-spacing: -0.01em; }
+  h2 { font-size: clamp(26px, 3.6vw, 36px); line-height: 1.3; margin: 0 0 8px; }
   .sub { color: var(--dim); margin: 0 0 26px; }
 
   .steps { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; counter-reset: s; }
@@ -109,118 +126,213 @@
   <nav>
     <a class="brand" href="#"><span class="pill"></span>WindyLand</a>
     <div class="links">
-      <a class="hide-sm" href="#features">Features</a>
-      <a class="hide-sm" href="#install">Install</a>
-      <a href="https://github.com/shabab239/WindyLand/blob/main/docs/USER_GUIDE.md">Guide</a>
+      <a class="hide-sm" href="#features" data-i18n="nav_features">ফিচার</a>
+      <a class="hide-sm" href="#install" data-i18n="nav_install">ইনস্টল</a>
+      <a class="hide-sm" href="https://github.com/shabab239/WindyLand/blob/main/docs/USER_GUIDE.md" data-i18n="nav_guide">গাইড</a>
       <a href="https://github.com/shabab239/WindyLand">GitHub</a>
+      <span class="lang" role="group" aria-label="Language">
+        <button type="button" data-lang="bn" aria-pressed="true">বাংলা</button>
+        <button type="button" data-lang="en" aria-pressed="false">English</button>
+      </span>
     </div>
   </nav>
 
   <header>
-    <h1>A Dynamic Island for Windows</h1>
-    <p class="lead">Music with synced lyrics, AI agent status, a color picker, calculator, clipboard history, reminders and more, in a small notch at the edge of your screen. Free and open source.</p>
-    <a class="dl" id="dl" href="https://github.com/shabab239/WindyLand/releases/latest">
+    <h1 data-i18n="h1">Windows এর জন্য Dynamic Island</h1>
+    <p class="lead" data-i18n="lead">গানের সাথে সাথে লিরিক্স, AI এজেন্টের স্ট্যাটাস, color picker, ক্যালকুলেটর, clipboard history, রিমাইন্ডার আর আরো অনেক কিছু, সবই স্ক্রিনের কিনারায় ছোট্ট একটা notch এ। ফ্রি আর open source।</p>
+    <a class="dl" href="https://github.com/shabab239/WindyLand/releases/latest" data-dl>
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/></svg>
-      <span id="dl-text">Download for Windows</span>
+      <span data-i18n="dl">Windows এর জন্য ডাউনলোড</span>
     </a>
-    <div class="meta"><span id="dl-meta">Windows 10 and 11 · free · no admin rights needed</span> · <a href="https://github.com/shabab239/WindyLand/releases">all versions</a></div>
+    <div class="meta"><span id="dl-meta" data-i18n="meta">Windows 10 আর 11 · ফ্রি · admin access লাগে না</span> · <a href="https://github.com/shabab239/WindyLand/releases" data-i18n="all_versions">সব ভার্সন</a></div>
     <img class="hero" src="images/hero-collage.png" alt="WindyLand: music with lyrics, alerts, AI agents, tools, system monitor and clipboard" width="1520" height="1124">
   </header>
 </div>
 
 <div class="wrap">
   <section id="install">
-    <h2>Install in a minute</h2>
-    <p class="sub">The installer is about 3 MB. Later updates install with one click from the notch.</p>
+    <h2 data-i18n="install_h">এক মিনিটে ইনস্টল</h2>
+    <p class="sub" data-i18n="install_sub">ইনস্টলারটা মাত্র ৩ MB এর মতো। পরের আপডেটগুলো notch থেকেই এক ক্লিকে ইনস্টল হয়।</p>
     <div class="steps">
-      <div class="step"><h3>Download</h3><p>Click the button above. The file is <code>WindyLandSetup-&lt;version&gt;.exe</code>.</p></div>
-      <div class="step"><h3>Run it</h3><p>If Windows shows a blue <b>Windows protected your PC</b> screen, click <b>More info</b>, then <b>Run anyway</b>.</p></div>
-      <div class="step"><h3>Pick a look</h3><p>A short welcome tour asks for a style and an edge. Hover the notch to open it, right-click it for settings.</p></div>
+      <div class="step"><h3 data-i18n="s1_h">ডাউনলোড</h3><p data-i18n="s1_p">উপরের বাটনে ক্লিক করুন। ফাইলের নাম <code>WindyLandSetup-&lt;version&gt;.exe</code>।</p></div>
+      <div class="step"><h3 data-i18n="s2_h">চালু করুন</h3><p data-i18n="s2_p">Windows যদি নীল রঙের <b>Windows protected your PC</b> স্ক্রিন দেখায়, <b>More info</b> চেপে তারপর <b>Run anyway</b> চাপুন।</p></div>
+      <div class="step"><h3 data-i18n="s3_h">লুক বেছে নিন</h3><p data-i18n="s3_p">শুরুতে ছোট একটা welcome tour জিজ্ঞেস করবে কোন স্টাইল আর কোন কিনারায় বসবে। notch এর উপর মাউস রাখলে খোলে, রাইট-ক্লিক করলে সেটিংস।</p></div>
     </div>
 
     <details class="help">
-      <summary>Why does Windows warn me?</summary>
-      <div>WindyLand isn't code signed yet (a certificate costs money every year), so Windows doesn't know the publisher. The code is all <a href="https://github.com/shabab239/WindyLand">on GitHub</a>, and every installer is built by GitHub Actions from that code. In the browser, if the download is held back, choose <b>Keep</b> from the download's menu.</div>
+      <summary data-i18n="q1">Windows সতর্ক করছে কেন?</summary>
+      <div data-i18n="a1">WindyLand এখনো code signed না (সার্টিফিকেটের জন্য প্রতি বছর টাকা লাগে), তাই Windows পাবলিশারকে চেনে না। পুরো কোড <a href="https://github.com/shabab239/WindyLand">GitHub এ</a> আছে, আর প্রতিটা ইনস্টলার GitHub Actions ওই কোড থেকেই বানায়। ব্রাউজার যদি ডাউনলোড আটকে দেয়, ডাউনলোডের মেনু থেকে <b>Keep</b> বেছে নিন।</div>
     </details>
     <details class="help">
-      <summary>"Smart App Control blocked an app"?</summary>
-      <div>Windows 11's Smart App Control blocks every unsigned app, with no way to allow just one. The only way to install is to turn it off in <b>Windows Security &gt; App &amp; browser control</b>. On many Windows versions it can't be turned back on without resetting Windows, so decide carefully.</div>
+      <summary data-i18n="q2">"Smart App Control blocked an app" দেখাচ্ছে?</summary>
+      <div data-i18n="a2">Windows 11 এর Smart App Control সব unsigned অ্যাপ আটকে দেয়, আলাদা করে একটা অ্যাপ allow করার উপায় নেই। ইনস্টল করতে হলে <b>Windows Security &gt; App &amp; browser control</b> থেকে এটা বন্ধ করতে হবে। অনেক Windows ভার্সনে Windows রিসেট না করে এটা আর চালু করা যায় না, তাই ভেবেচিন্তে সিদ্ধান্ত নিন।</div>
     </details>
     <details class="help">
-      <summary>How do I uninstall it?</summary>
-      <div>Right-click the tray icon and choose <b>Uninstall WindyLand</b>, or use <b>Settings &gt; Apps</b> like any other app.</div>
+      <summary data-i18n="q3">আনইনস্টল করবো কীভাবে?</summary>
+      <div data-i18n="a3">ট্রে আইকনে রাইট-ক্লিক করে <b>Uninstall WindyLand</b> চাপুন, অথবা অন্য অ্যাপের মতো <b>Settings &gt; Apps</b> থেকে।</div>
     </details>
   </section>
 
   <section id="features">
-    <h2>Much more than a notch</h2>
-    <p class="sub">Every panel is optional: hide the ones you don't need.</p>
+    <h2 data-i18n="feat_h">শুধু notch না, আরো অনেক কিছু</h2>
+    <p class="sub" data-i18n="feat_sub">প্রতিটা প্যানেল অপশনাল: যেটা লাগবে না, লুকিয়ে রাখুন।</p>
     <div class="grid">
-      <div class="feat"><img loading="lazy" src="images/lyrics.png" alt="Synced lyrics"><div class="t"><h3>Music + synced lyrics</h3><p>Spotify, browsers or any player. The current line lights up as it's sung.</p></div></div>
-      <div class="feat"><img loading="lazy" src="images/agents.png" alt="AI agents"><div class="t"><h3>AI agents</h3><p>See when Hermes, Claude Code or Codex is working, needs your OK, or is done.</p></div></div>
-      <div class="feat"><img loading="lazy" src="images/tools.png" alt="Color picker"><div class="t"><h3>Tools</h3><p>Color picker for anything on screen, calculator, QR codes, unit converter and time zones.</p></div></div>
-      <div class="feat"><img loading="lazy" src="images/clipboard.png" alt="Clipboard history"><div class="t"><h3>Clipboard history</h3><p>Click to paste, search, pin and snippets. Off until you turn it on.</p></div></div>
-      <div class="feat"><img loading="lazy" src="images/monitor.png" alt="System monitor"><div class="t"><h3>System monitor</h3><p>CPU, memory and network speed with a minute of history.</p></div></div>
-      <div class="feat"><img loading="lazy" src="images/notifications.png" alt="Windows notifications"><div class="t"><h3>Notifications</h3><p>Other apps' Windows notifications drop out of the notch, with their icon.</p></div></div>
-      <div class="feat"><img loading="lazy" src="images/todo.png" alt="To-do"><div class="t"><h3>To-do with reminders</h3><p>Jot a task, give it a time, and the notch taps you when it's due.</p></div></div>
-      <div class="feat"><img loading="lazy" src="images/prayer.png" alt="Prayer times"><div class="t"><h3>Prayer times</h3><p>Worked out on your PC for your city, with optional reminders.</p></div></div>
+      <div class="feat"><img loading="lazy" src="images/lyrics.png" alt="Synced lyrics"><div class="t"><h3 data-i18n="f1_h">মিউজিক + লিরিক্স</h3><p data-i18n="f1_p">Spotify, ব্রাউজার বা যেকোনো প্লেয়ার। গানের যে লাইন চলছে সেটা হাইলাইট হয়।</p></div></div>
+      <div class="feat"><img loading="lazy" src="images/agents.png" alt="AI agents"><div class="t"><h3 data-i18n="f2_h">AI এজেন্ট</h3><p data-i18n="f2_p">Hermes, Claude Code বা Codex কাজ করছে, আপনার OK চাইছে, নাকি কাজ শেষ, notch এই দেখা যায়।</p></div></div>
+      <div class="feat"><img loading="lazy" src="images/tools.png" alt="Color picker"><div class="t"><h3 data-i18n="f3_h">Tools</h3><p data-i18n="f3_p">স্ক্রিনের যেকোনো জায়গা থেকে color picker, ক্যালকুলেটর, QR code, unit converter (কাঠা, বিঘা, শতাংশ, মণসহ) আর টাইম জোন।</p></div></div>
+      <div class="feat"><img loading="lazy" src="images/clipboard.png" alt="Clipboard history"><div class="t"><h3 data-i18n="f4_h">Clipboard history</h3><p data-i18n="f4_p">ক্লিক করলেই পেস্ট, সার্চ, পিন আর snippet। আপনি চালু না করা পর্যন্ত বন্ধ থাকে।</p></div></div>
+      <div class="feat"><img loading="lazy" src="images/monitor.png" alt="System monitor"><div class="t"><h3 data-i18n="f5_h">System monitor</h3><p data-i18n="f5_p">CPU, RAM আর নেট স্পিড, শেষ এক মিনিটের গ্রাফসহ।</p></div></div>
+      <div class="feat"><img loading="lazy" src="images/notifications.png" alt="Windows notifications"><div class="t"><h3 data-i18n="f6_h">নোটিফিকেশন</h3><p data-i18n="f6_p">অন্য অ্যাপের Windows নোটিফিকেশন notch থেকে নেমে আসে, অ্যাপের আইকনসহ।</p></div></div>
+      <div class="feat"><img loading="lazy" src="images/todo.png" alt="To-do"><div class="t"><h3 data-i18n="f7_h">রিমাইন্ডারসহ To-do</h3><p data-i18n="f7_p">কাজটা লিখে একটা সময় দিয়ে দিন, সময় হলে notch মনে করিয়ে দেবে।</p></div></div>
+      <div class="feat"><img loading="lazy" src="images/prayer.png" alt="Prayer times"><div class="t"><h3 data-i18n="f8_h">নামাজের সময়</h3><p data-i18n="f8_p">আপনার শহরের সময় পিসিতেই হিসাব হয়, চাইলে রিমাইন্ডারও পাবেন।</p></div></div>
     </div>
     <div class="more">
-      <span class="chip">File shelf</span><span class="chip">Screenshots</span><span class="chip">Timer and stopwatch</span>
-      <span class="chip">Pomodoro</span><span class="chip">Water reminder</span><span class="chip">Volume, charging, Caps Lock</span>
-      <span class="chip">Bluetooth connects</span><span class="chip">Mic and camera dots</span><span class="chip">8 mascots</span>
-      <span class="chip">4 styles, any screen edge</span><span class="chip">Hides for full-screen games and movies</span>
+      <span class="chip" data-i18n="c1">ফাইল শেলফ</span><span class="chip" data-i18n="c2">স্ক্রিনশট</span><span class="chip" data-i18n="c3">টাইমার আর স্টপওয়াচ</span>
+      <span class="chip" data-i18n="c4">পোমোডোরো</span><span class="chip" data-i18n="c5">পানি খাওয়ার রিমাইন্ডার</span><span class="chip" data-i18n="c6">ভলিউম, চার্জিং, Caps Lock</span>
+      <span class="chip" data-i18n="c7">ব্লুটুথ কানেক্ট</span><span class="chip" data-i18n="c8">মাইক আর ক্যামেরার ডট</span><span class="chip" data-i18n="c9">৮টা mascot</span>
+      <span class="chip" data-i18n="c10">৪টা স্টাইল, যেকোনো কিনারায়</span><span class="chip" data-i18n="c11">ফুল স্ক্রিন গেম বা মুভিতে সরে যায়</span>
     </div>
   </section>
 
   <section>
-    <h2>See it move</h2>
-    <p class="sub">Styles, music and lyrics, every panel, alerts and settings.</p>
+    <h2 data-i18n="demo_h">চলতে দেখুন</h2>
+    <p class="sub" data-i18n="demo_sub">স্টাইল, মিউজিক আর লিরিক্স, সব প্যানেল, অ্যালার্ট আর সেটিংস।</p>
     <div class="demo"><img loading="lazy" src="images/demo.gif" alt="WindyLand demo" width="900"></div>
   </section>
 
   <section>
-    <h2>Your data stays on your PC</h2>
-    <p class="sub">No account, no tracking. <a href="https://github.com/shabab239/WindyLand/blob/main/PRIVACY.md">Privacy policy</a></p>
+    <h2 data-i18n="priv_h">আপনার ডেটা আপনার পিসিতেই থাকে</h2>
+    <p class="sub" data-i18n="priv_sub">কোনো অ্যাকাউন্ট নেই, কোনো ট্র্যাকিং নেই। <a href="https://github.com/shabab239/WindyLand/blob/main/PRIVACY.md">প্রাইভেসি পলিসি</a></p>
     <div class="privacy">
-      <div><b>Two network requests</b>Lyrics from LRCLIB and the update check on GitHub. Nothing else goes online.</div>
-      <div><b>Opt-in</b>Notifications and clipboard history stay off until you turn them on.</div>
-      <div><b>Open source</b>MIT licensed and written in Rust. Read every line on GitHub.</div>
+      <div data-i18n="p1"><b>মাত্র দুইটা নেটওয়ার্ক রিকোয়েস্ট</b>LRCLIB থেকে লিরিক্স আর GitHub এ আপডেট চেক। এর বাইরে কিছুই অনলাইনে যায় না।</div>
+      <div data-i18n="p2"><b>আপনার ইচ্ছায়</b>নোটিফিকেশন আর clipboard history আপনি চালু না করা পর্যন্ত বন্ধ থাকে।</div>
+      <div data-i18n="p3"><b>Open source</b>MIT লাইসেন্স, Rust এ লেখা। প্রতিটা লাইন GitHub এ দেখতে পারবেন।</div>
     </div>
   </section>
 
   <div class="cta">
-    <h2>Try it</h2>
-    <p class="sub">Ideas or bugs? <a href="https://github.com/shabab239/WindyLand/issues">Open an issue</a>.</p>
+    <h2 data-i18n="cta_h">ট্রাই করে দেখুন</h2>
+    <p class="sub" data-i18n="cta_sub">আইডিয়া বা বাগ? <a href="https://github.com/shabab239/WindyLand/issues">GitHub এ issue খুলুন</a>।</p>
     <a class="dl" href="https://github.com/shabab239/WindyLand/releases/latest" data-dl>
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/></svg>
-      <span>Download for Windows</span>
+      <span data-i18n="dl">Windows এর জন্য ডাউনলোড</span>
     </a>
   </div>
 </div>
 
 <footer>
   <div class="wrap">
-    <span>WindyLand by <a href="https://github.com/shabab239">Shabab Ahmed</a>. Not affiliated with Apple.</span>
-    <span><a href="https://github.com/shabab239/WindyLand">Source</a> · <a href="https://github.com/shabab239/WindyLand/blob/main/docs/USER_GUIDE.md">User guide</a> · <a href="https://github.com/shabab239/WindyLand/blob/main/CHANGELOG.md">Changelog</a> · <a href="https://github.com/shabab239/WindyLand/blob/main/PRIVACY.md">Privacy</a></span>
+    <span data-i18n="foot1">WindyLand বানিয়েছেন <a href="https://github.com/shabab239">Shabab Ahmed</a>। Apple এর সাথে এর কোনো সম্পর্ক নেই।</span>
+    <span data-i18n="foot2"><a href="https://github.com/shabab239/WindyLand">সোর্স কোড</a> · <a href="https://github.com/shabab239/WindyLand/blob/main/docs/USER_GUIDE.md">ইউজার গাইড</a> · <a href="https://github.com/shabab239/WindyLand/blob/main/CHANGELOG.md">চেঞ্জলগ</a> · <a href="https://github.com/shabab239/WindyLand/blob/main/PRIVACY.md">প্রাইভেসি</a></span>
   </div>
 </footer>
 
 <script>
+  // English text. Only these fixed strings (and the page's own Bangla) are
+  // ever put into innerHTML, never anything from the network or the URL.
+  var EN = {
+    nav_features: "Features",
+    nav_install: "Install",
+    nav_guide: "Guide",
+    h1: "A Dynamic Island for Windows",
+    lead: "Music with synced lyrics, AI agent status, a color picker, calculator, clipboard history, reminders and more, in a small notch at the edge of your screen. Free and open source.",
+    dl: "Download for Windows",
+    meta: "Windows 10 and 11 · free · no admin rights needed",
+    all_versions: "all versions",
+    install_h: "Install in a minute",
+    install_sub: "The installer is about 3 MB. Later updates install with one click from the notch.",
+    s1_h: "Download",
+    s1_p: "Click the button above. The file is <code>WindyLandSetup-&lt;version&gt;.exe</code>.",
+    s2_h: "Run it",
+    s2_p: "If Windows shows a blue <b>Windows protected your PC</b> screen, click <b>More info</b>, then <b>Run anyway</b>.",
+    s3_h: "Pick a look",
+    s3_p: "A short welcome tour asks for a style and an edge. Hover the notch to open it, right-click it for settings.",
+    q1: "Why does Windows warn me?",
+    a1: "WindyLand isn't code signed yet (a certificate costs money every year), so Windows doesn't know the publisher. The code is all <a href=\"https://github.com/shabab239/WindyLand\">on GitHub</a>, and every installer is built by GitHub Actions from that code. If the browser holds the download back, choose <b>Keep</b> from the download's menu.",
+    q2: "\"Smart App Control blocked an app\"?",
+    a2: "Windows 11's Smart App Control blocks every unsigned app, with no way to allow just one. The only way to install is to turn it off in <b>Windows Security &gt; App &amp; browser control</b>. On many Windows versions it can't be turned back on without resetting Windows, so decide carefully.",
+    q3: "How do I uninstall it?",
+    a3: "Right-click the tray icon and choose <b>Uninstall WindyLand</b>, or use <b>Settings &gt; Apps</b> like any other app.",
+    feat_h: "Much more than a notch",
+    feat_sub: "Every panel is optional: hide the ones you don't need.",
+    f1_h: "Music + synced lyrics",
+    f1_p: "Spotify, browsers or any player. The current line lights up as it's sung.",
+    f2_h: "AI agents",
+    f2_p: "See when Hermes, Claude Code or Codex is working, needs your OK, or is done.",
+    f3_h: "Tools",
+    f3_p: "Color picker for anything on screen, calculator, QR codes, unit converter and time zones.",
+    f4_h: "Clipboard history",
+    f4_p: "Click to paste, search, pin and snippets. Off until you turn it on.",
+    f5_h: "System monitor",
+    f5_p: "CPU, memory and network speed with a minute of history.",
+    f6_h: "Notifications",
+    f6_p: "Other apps' Windows notifications drop out of the notch, with their icon.",
+    f7_h: "To-do with reminders",
+    f7_p: "Jot a task, give it a time, and the notch taps you when it's due.",
+    f8_h: "Prayer times",
+    f8_p: "Worked out on your PC for your city, with optional reminders.",
+    c1: "File shelf", c2: "Screenshots", c3: "Timer and stopwatch", c4: "Pomodoro", c5: "Water reminder",
+    c6: "Volume, charging, Caps Lock", c7: "Bluetooth connects", c8: "Mic and camera dots", c9: "8 mascots",
+    c10: "4 styles, any screen edge", c11: "Hides for full-screen games and movies",
+    demo_h: "See it move",
+    demo_sub: "Styles, music and lyrics, every panel, alerts and settings.",
+    priv_h: "Your data stays on your PC",
+    priv_sub: "No account, no tracking. <a href=\"https://github.com/shabab239/WindyLand/blob/main/PRIVACY.md\">Privacy policy</a>",
+    p1: "<b>Two network requests</b>Lyrics from LRCLIB and the update check on GitHub. Nothing else goes online.",
+    p2: "<b>Opt-in</b>Notifications and clipboard history stay off until you turn them on.",
+    p3: "<b>Open source</b>MIT licensed and written in Rust. Read every line on GitHub.",
+    cta_h: "Try it",
+    cta_sub: "Ideas or bugs? <a href=\"https://github.com/shabab239/WindyLand/issues\">Open an issue</a>.",
+    foot1: "WindyLand by <a href=\"https://github.com/shabab239\">Shabab Ahmed</a>. Not affiliated with Apple.",
+    foot2: "<a href=\"https://github.com/shabab239/WindyLand\">Source</a> · <a href=\"https://github.com/shabab239/WindyLand/blob/main/docs/USER_GUIDE.md\">User guide</a> · <a href=\"https://github.com/shabab239/WindyLand/blob/main/CHANGELOG.md\">Changelog</a> · <a href=\"https://github.com/shabab239/WindyLand/blob/main/PRIVACY.md\">Privacy</a>"
+  };
+  var TITLE = { bn: "WindyLand: Windows এর জন্য Dynamic Island", en: "WindyLand: a Dynamic Island for Windows" };
+
+  // The page is written in Bangla; keep it so switching back works.
+  var BN = {};
+  document.querySelectorAll("[data-i18n]").forEach(function (el) { BN[el.dataset.i18n] = el.innerHTML; });
+
+  var release = null;
+  function metaText(lang) {
+    if (!release) return lang === "en" ? EN.meta : BN.meta;
+    return lang === "en"
+      ? "Version " + release.v + " · " + release.mb + " MB · Windows 10 and 11 · free"
+      : "ভার্সন " + release.v + " · " + release.mb + " MB · Windows 10 আর 11 · ফ্রি";
+  }
+
+  function setLang(lang) {
+    var dict = lang === "en" ? EN : BN;
+    document.querySelectorAll("[data-i18n]").forEach(function (el) {
+      var t = dict[el.dataset.i18n];
+      if (t !== undefined) el.innerHTML = t;
+    });
+    document.getElementById("dl-meta").textContent = metaText(lang);
+    document.documentElement.lang = lang;
+    document.documentElement.classList.add("ready");
+    document.title = TITLE[lang];
+    document.querySelectorAll(".lang button").forEach(function (b) { b.setAttribute("aria-pressed", String(b.dataset.lang === lang)); });
+  }
+
+  document.querySelectorAll(".lang button").forEach(function (b) {
+    b.addEventListener("click", function () {
+      try { localStorage.setItem("wl-lang", b.dataset.lang); } catch (e) {}
+      setLang(b.dataset.lang);
+    });
+  });
+  setLang(document.documentElement.lang === "en" ? "en" : "bn");
+
   // Point the buttons straight at the newest installer. If GitHub can't be
   // reached, they keep linking to the Releases page.
   fetch("https://api.github.com/repos/shabab239/WindyLand/releases/latest")
-    .then(r => r.ok ? r.json() : Promise.reject())
-    .then(rel => {
-      const exe = (rel.assets || []).find(a => /\.exe$/i.test(a.name));
+    .then(function (r) { return r.ok ? r.json() : Promise.reject(); })
+    .then(function (rel) {
+      var exe = (rel.assets || []).find(function (a) { return /\.exe$/i.test(a.name); });
       if (!exe) return;
-      const v = (rel.tag_name || "").replace(/^v/, "");
-      const mb = (exe.size / 1048576).toFixed(1);
-      document.querySelectorAll("#dl, [data-dl]").forEach(a => a.href = exe.browser_download_url);
-      document.getElementById("dl-text").textContent = "Download for Windows";
-      document.getElementById("dl-meta").textContent = "Version " + v + " · " + mb + " MB · Windows 10 and 11 · free";
+      release = { v: String(rel.tag_name || "").replace(/^v/, ""), mb: (exe.size / 1048576).toFixed(1) };
+      document.querySelectorAll("[data-dl]").forEach(function (a) { a.href = exe.browser_download_url; });
+      document.getElementById("dl-meta").textContent = metaText(document.documentElement.lang);
     })
-    .catch(() => {});
+    .catch(function () {});
 </script>
 </body>
 </html>
