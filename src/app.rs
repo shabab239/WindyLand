@@ -71,7 +71,7 @@ const TOUR_PANELS: [(&str, &str, &str); 4] = [
 /// Tour step 4: what's in Settings, at a glance.
 const TOUR_SETTINGS: [(&str, &str, &str); 8] = [
     ("\u{E771}", "Style & edge", "4 looks; slims over full windows"),
-    ("\u{E76E}", "Mascot", "Follows your mouse"),
+    ("\u{E76E}", "Mascot", "In the notch or taskbar"),
     (glyph::VOLUME, "Sounds", "Pick a chime, or none"),
     ("\u{E8A9}", "Panels", "Hide what you don't use"),
     (glyph::BELL, "Notifications", "Opt-in Windows alerts"),
@@ -103,6 +103,7 @@ const S_NOTIF_BANNERS: u32 = 102;
 const S_NOTIF_UNMUTE: u32 = 103;
 const S_POLICY: u32 = 104;
 const S_MASCOT_ALWAYS: u32 = 105;
+const S_TASKBAR_PET: u32 = 113;
 const S_UPDATE_AUTO: u32 = 109;
 const S_MASCOT_POS: u32 = 106; // + 0 left, 1 centre, 2 right
 const S_PANEL: u32 = 120; // + module index
@@ -269,6 +270,11 @@ pub struct App {
     /// Hit under the mouse with a tooltip: (module, id, since, suppressed by a click).
     tip: Option<(usize, u32, f64, bool)>,
     pub deferred: Vec<Deferred>,
+    /// The mascot on the Windows taskbar (Settings > Mascot > Taskbar).
+    pet: Option<crate::taskbar::Pet>,
+    /// Screen x of the taskbar mascot's centre while the notch lives above
+    /// it (taskbar mode), else None.
+    dock_x: Option<i32>,
 }
 
 thread_local! {
@@ -414,6 +420,8 @@ impl App {
                 settings_room: [0.0; 3],
                 tip: None,
                 deferred: Vec::new(),
+                pet: None,
+                dock_x: None,
             };
             app.place();
             sound::set(app.settings.sound);
@@ -447,9 +455,12 @@ impl App {
     /// anywhere along the edge (`anchor` is its centre inside the canvas).
     fn place(&mut self) {
         unsafe {
-            let mon = match self.settings.monitor {
-                Some((x, y)) => MonitorFromPoint(POINT { x, y }, MONITOR_DEFAULTTONEAREST),
-                None => MonitorFromPoint(POINT { x: 0, y: 0 }, MONITOR_DEFAULTTOPRIMARY),
+            // Docked to the taskbar mascot: the taskbar's screen, bottom edge.
+            let taskbar = FindWindowW(w!("Shell_TrayWnd"), None).ok();
+            let mon = match (self.dock_x, taskbar, self.settings.monitor) {
+                (Some(_), Some(tb), _) => MonitorFromWindow(tb, MONITOR_DEFAULTTOPRIMARY),
+                (_, _, Some((x, y))) => MonitorFromPoint(POINT { x, y }, MONITOR_DEFAULTTONEAREST),
+                _ => MonitorFromPoint(POINT { x: 0, y: 0 }, MONITOR_DEFAULTTOPRIMARY),
             };
             let mut mi = MONITORINFO { cbSize: std::mem::size_of::<MONITORINFO>() as u32, ..Default::default() };
             let _ = GetMonitorInfoW(mon, &mut mi);
@@ -460,17 +471,17 @@ impl App {
             let ph = (CANVAS_H * self.scale).ceil() as i32;
             let r = mi.rcWork;
             let pos = self.settings.pos.clamp(0.0, 1.0);
-            let (x, y, anchor_px) = match self.settings.edge {
+            let (x, y, anchor_px) = match self.edge() {
                 Edge::Top | Edge::Bottom => {
-                    let c = r.left + ((r.right - r.left) as f32 * pos) as i32;
+                    let c = self.dock_x.unwrap_or(r.left + ((r.right - r.left) as f32 * pos) as i32);
                     let x = (c - pw / 2).clamp(r.left, (r.right - pw).max(r.left));
-                    let y = if self.settings.edge == Edge::Top { r.top } else { r.bottom - ph };
+                    let y = if self.edge() == Edge::Top { r.top } else { r.bottom - ph };
                     (x, y, c - x)
                 }
                 Edge::Left | Edge::Right => {
                     let c = r.top + ((r.bottom - r.top) as f32 * pos) as i32;
                     let y = (c - ph / 2).clamp(r.top, (r.bottom - ph).max(r.top));
-                    let x = if self.settings.edge == Edge::Left { r.left } else { r.right - pw };
+                    let x = if self.edge() == Edge::Left { r.left } else { r.right - pw };
                     (x, y, c - y)
                 }
             };
@@ -599,14 +610,200 @@ impl App {
         crate::time::H12.store(self.settings.clock12, std::sync::atomic::Ordering::Relaxed);
         self.update_make_room();
         self.update_mood();
+        self.sync_pet();
         self.request_frame();
+    }
+
+    // ---------------------------------------------------- taskbar mascot
+
+    fn pet_wanted(&self) -> bool {
+        self.settings.extra.get("taskbar_pet").map_or(false, |v| v == "1") && !crate::modules::agents::ISOLATED.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// Create or remove the taskbar mascot to match the setting, and hide
+    /// it while a full-screen app runs.
+    pub fn sync_pet(&mut self) {
+        let want = self.pet_wanted();
+        if want && self.pet.is_none() {
+            self.pet = crate::taskbar::Pet::create();
+            self.pet_place();
+        } else if !want {
+            if let Some(p) = self.pet.take() {
+                p.destroy();
+            }
+            if self.dock_x.take().is_some() {
+                self.place();
+                self.request_frame();
+            }
+        }
+    }
+
+    fn pet_place(&mut self) {
+        let hidden = self.hidden;
+        let mut dock = None;
+        if let Some(p) = self.pet.as_mut() {
+            let place = if hidden { None } else { crate::taskbar::locate() };
+            p.set_place(place);
+            p.raise();
+            // The notch moves above the mascot (if the mascot can't show,
+            // e.g. an auto-hidden taskbar, the notch goes back to its place).
+            dock = place.map(|pl| {
+                let half = (crate::taskbar::MASCOT_W * pl.scale / 2.0) as i32;
+                if pl.hint_left { pl.x + pl.w - half } else { pl.x + half }
+            });
+        }
+        if dock != self.dock_x && !(hidden && self.dock_x.is_some()) {
+            self.dock_x = dock;
+            self.place();
+            self.request_frame();
+        }
+    }
+
+    /// Turn taskbar mode off (the user picked a place for the notch).
+    fn undock(&mut self) {
+        if self.pet_wanted() {
+            self.settings.extra.insert("taskbar_pet".into(), "0".into());
+            self.sync_pet();
+        }
+    }
+
+    pub fn pet_raise(&mut self) {
+        if let Some(p) = &self.pet {
+            p.raise();
+        }
+    }
+
+    fn pet_frame(&mut self) {
+        let Some(mut pet) = self.pet.take() else { return };
+        if let (Some(pl), true) = (pet.place, pet.shown) {
+            let t = self.t();
+            let s = pl.scale;
+            let (w, h) = (pl.w as f32 / s, pl.h as f32 / s);
+            let mbox = if pl.hint_left {
+                Rect::new(w - crate::taskbar::MASCOT_W, 3.0, crate::taskbar::MASCOT_W, h - 6.0)
+            } else {
+                Rect::new(0.0, 3.0, crate::taskbar::MASCOT_W, h - 6.0)
+            };
+            if self.dock_x.is_some() {
+                if pet.hover && !self.expanded && t - pet.hover_since >= 0.25 && self.can_hover_open() {
+                    self.open_from_hover();
+                }
+                if pet.hover && self.mode() == Mode::Expanded && !self.hover {
+                    self.leave_at = Some(t + 0.6);
+                }
+            }
+            let idle = Self::system_idle_secs();
+            let mood = if pet.hover {
+                Mood::Wave
+            } else if idle > 120.0 {
+                Mood::Doze
+            } else {
+                Mood::Eyes
+            };
+            let mut hits = Vec::new();
+            pet.gfx.begin(s);
+            {
+                let mut ui = Ui { g: &mut pet.gfx, hits: &mut hits, module: usize::MAX - 9, mouse: (-1e4, -1e4), t };
+                // Nearly invisible, but it makes the whole box clickable.
+                ui.fill_rr(mbox, 8.0, col::NOTCH.with_a(0.012));
+                if pet.hover {
+                    ui.fill_rr(mbox, 8.0, col::TEXT.with_a(0.08));
+                }
+                draw_mascot(&mut ui, mbox.inset_xy(2.0, 2.0), self.settings.mascot, mood, t, (pl.x, pl.y), s);
+                if pet.hover && t - pet.hover_since > 0.5 && self.dock_x.is_none() {
+                    let hint = "Click: open  \u{00B7}  Right-click: settings";
+                    let tw = ui.measure(hint, 11.5, Weight::Regular) + 20.0;
+                    let hr = if pl.hint_left {
+                        Rect::new(mbox.x - tw - 6.0, h / 2.0 - 12.0, tw, 24.0)
+                    } else {
+                        Rect::new(mbox.r() + 6.0, h / 2.0 - 12.0, tw, 24.0)
+                    };
+                    ui.fill_rr(hr, 12.0, col::NOTCH.with_a(0.92));
+                    ui.text(hint, hr, 11.5, col::TEXT, Weight::Regular, Align::Center);
+                }
+            }
+            pet.gfx.end_and_present(pet.hwnd, pl.x, pl.y);
+        }
+        self.pet = Some(pet);
+    }
+
+    /// Messages for the taskbar mascot's window.
+    pub fn pet_msg(&mut self, hwnd: HWND, msg: u32, wp: WPARAM, _lp: LPARAM) -> Option<LRESULT> {
+        if self.pet.as_ref().map_or(true, |p| p.hwnd != hwnd) {
+            return None;
+        }
+        match msg {
+            WM_TIMER => {
+                match wp.0 {
+                    crate::taskbar::TIMER_FRAME => self.pet_frame(),
+                    crate::taskbar::TIMER_PLACE => self.pet_place(),
+                    _ => {}
+                }
+                Some(LRESULT(0))
+            }
+            WM_MOUSEMOVE => {
+                let t = self.t();
+                if let Some(p) = self.pet.as_mut() {
+                    if !p.hover {
+                        p.hover = true;
+                        p.hover_since = t;
+                        unsafe {
+                            let mut tme = TRACKMOUSEEVENT { cbSize: std::mem::size_of::<TRACKMOUSEEVENT>() as u32, dwFlags: TME_LEAVE, hwndTrack: hwnd, dwHoverTime: 0 };
+                            let _ = TrackMouseEvent(&mut tme);
+                        }
+                    }
+                }
+                Some(LRESULT(0))
+            }
+            WM_MOUSELEAVE => {
+                if let Some(p) = self.pet.as_mut() {
+                    p.hover = false;
+                }
+                // Left the mascot without going up into the panel.
+                if self.dock_x.is_some() && !self.hover && self.mode() == Mode::Expanded && self.keyboard.is_none() {
+                    self.leave_at = Some(self.t() + 0.5);
+                }
+                self.hover_block = false;
+                Some(LRESULT(0))
+            }
+            WM_LBUTTONDOWN | WM_RBUTTONDOWN => Some(LRESULT(0)),
+            WM_LBUTTONUP => {
+                // Open the notch; the mouse is down here, so give it time.
+                self.expanded = true;
+                self.settings_open = false;
+                self.raise();
+                self.leave_at = Some(self.t() + 4.0);
+                self.request_frame();
+                Some(LRESULT(0))
+            }
+            WM_RBUTTONUP => {
+                self.open_settings();
+                self.raise();
+                Some(LRESULT(0))
+            }
+            _ => None,
+        }
     }
 
     // ------------------------------------------------------- make room
 
+    /// The edge the notch uses right now (the bottom while it lives above
+    /// the taskbar mascot).
+    fn edge(&self) -> Edge {
+        if self.dock_x.is_some() {
+            Edge::Bottom
+        } else {
+            self.settings.edge
+        }
+    }
+
     /// The look the closed notch uses right now: a thin bar while it is
-    /// making room for a maximized window (Full and Compact only).
+    /// making room for a maximized window (Full and Compact only); nothing
+    /// at all while the taskbar mascot stands in for it.
     fn look(&self) -> NotchStyle {
+        if self.dock_x.is_some() {
+            return NotchStyle::Hidden;
+        }
         match self.settings.style {
             NotchStyle::Full | NotchStyle::Compact if self.yielding() => NotchStyle::Pill,
             s => s,
@@ -892,7 +1089,7 @@ impl App {
 
     /// Target size in edge-local terms: (along the edge, away from it, radius).
     fn target(&mut self) -> (f32, f32, f32) {
-        let vertical = self.settings.edge.vertical();
+        let vertical = self.edge().vertical();
         // Panels keep their upright (w, h); on side edges "along" is the height.
         let panel = |w: f32, h: f32, rad: f32| if vertical { (h, w, rad) } else { (w, h, rad) };
         match self.mode() {
@@ -938,7 +1135,7 @@ impl App {
     /// Screen rect (canvas DIPs) of a notch `along` x `depth` on the current
     /// edge, centred on `anchor` but kept inside the canvas.
     fn edge_rect(&self, along: f32, depth: f32) -> Rect {
-        let edge = self.settings.edge;
+        let edge = self.edge();
         let span = if edge.vertical() { CANVAS_H } else { CANVAS_W };
         let c = self.anchor.clamp(along / 2.0, (span - along / 2.0).max(along / 2.0));
         match edge {
@@ -952,7 +1149,7 @@ impl App {
     /// Inner content rect with `near` padding on the screen-edge side, `far`
     /// on the opposite side and `side` padding left/right.
     fn content_rect(&self, goal: Rect, near: f32, far: f32, side: f32) -> Rect {
-        match self.settings.edge {
+        match self.edge() {
             Edge::Top => Rect::new(goal.x + side, goal.y + near, goal.w - 2.0 * side, goal.h - near - far),
             Edge::Bottom => Rect::new(goal.x + side, goal.y + far, goal.w - 2.0 * side, goal.h - near - far),
             Edge::Left | Edge::Right => {
@@ -1117,7 +1314,7 @@ impl App {
         let (along, depth, rad) = self.cur;
         let notch = self.edge_rect(along, depth);
         let goal = self.edge_rect(target.0, target.1);
-        let edge = self.settings.edge;
+        let edge = self.edge();
         let mode = self.mode();
         // While switching tabs the panel stays solid and only the content
         // cross-fades; otherwise content fades in as the notch opens.
@@ -1200,7 +1397,7 @@ impl App {
         let ht = 22.0;
         let r = h.rect;
         let gap = 6.0;
-        let (mut x, mut y) = match self.settings.edge {
+        let (mut x, mut y) = match self.edge() {
             Edge::Top => (r.cx() - w / 2.0, r.b() + gap),
             Edge::Bottom => (r.cx() - w / 2.0, r.y - gap - ht),
             Edge::Left => (r.r() + gap, r.cy() - ht / 2.0),
@@ -1358,7 +1555,7 @@ impl App {
     /// screen edge, like a phone's privacy dots. A dark rim keeps them
     /// visible on white windows.
     fn draw_dots(&mut self, dots: &[Color], notch: Rect) {
-        let edge = self.settings.edge;
+        let edge = self.edge();
         let n = dots.len() as f32;
         for (k, c) in dots.iter().enumerate() {
             let off = 10.0 + k as f32 * 12.0;
@@ -1443,8 +1640,10 @@ impl App {
             ui.chip(mrow.cut_right(50.0, 4.0), name, S_MASCOT_POS + k as u32, st.mascot_pos == k as u8, accent);
         }
         mrow.cut_right(6.0, 0.0);
-        ui.chip(mrow.cut_right(60.0, 0.0), "Always", S_MASCOT_ALWAYS, st.mascot_always, accent);
-        label(&mut ui, mrow, "Mascot (Full style)");
+        ui.chip(mrow.cut_right(60.0, 6.0), "Always", S_MASCOT_ALWAYS, st.mascot_always, accent);
+        let on_taskbar = st.extra.get("taskbar_pet").map_or(false, |v| v == "1");
+        ui.chip(mrow.cut_right(68.0, 0.0), "Taskbar", S_TASKBAR_PET, on_taskbar, accent);
+        label(&mut ui, mrow, "Mascot");
         let grid = left.cut_top(90.0, 8.0);
         let rows = [Rect::new(grid.x, grid.y, grid.w, 42.0), Rect::new(grid.x, grid.y + 48.0, grid.w, 42.0)];
         // Tile 0 is "Clock" (no mascot), then every mascot.
@@ -1563,13 +1762,14 @@ impl App {
     fn settings_action(&mut self, id: u32) {
         match id {
             i if (S_STYLE..S_STYLE + NotchStyle::ALL.len() as u32).contains(&i) => {
+                self.undock();
                 self.settings.style = NotchStyle::ALL[(i - S_STYLE) as usize];
             }
             i if (S_EDGE..S_EDGE + Edge::ALL.len() as u32).contains(&i) => {
                 self.set_edge(Edge::ALL[(i - S_EDGE) as usize], false);
             }
             S_CENTER => {
-                let e = self.settings.edge;
+                let e = self.edge();
                 self.set_edge(e, true);
             }
             S_MASCOT => self.settings.personality = false,
@@ -1602,6 +1802,11 @@ impl App {
             }
             i if (S_PAGE..S_PAGE + 3).contains(&i) => self.settings_page = (i - S_PAGE) as u8,
             S_MASCOT_ALWAYS => self.settings.mascot_always = !self.settings.mascot_always,
+            S_TASKBAR_PET => {
+                let on = self.settings.extra.get("taskbar_pet").map_or(false, |v| v == "1");
+                self.settings.extra.insert("taskbar_pet".into(), if on { "0" } else { "1" }.into());
+                self.sync_pet();
+            }
             i if (S_MASCOT_POS..S_MASCOT_POS + 3).contains(&i) => self.settings.mascot_pos = (i - S_MASCOT_POS) as u8,
             i if (S_PANEL..S_PANEL + self.modules.len() as u32).contains(&i) => {
                 let title = self.modules[(i - S_PANEL) as usize].title().to_string();
@@ -1894,6 +2099,9 @@ impl App {
         let pill = self.look() == NotchStyle::Pill;
         // Alpha of ~1% is invisible but still catches the mouse
         // (fully transparent layered-window pixels are click-through).
+        if self.dock_x.is_some() {
+            return;
+        }
         let (za, zd) = if pill { (200.0, 14.0) } else { (280.0, 3.0) };
         let zone = self.edge_rect(za, zd);
         self.gfx.fill_rect(zone, col::NOTCH.with_a(0.012));
@@ -1908,7 +2116,7 @@ impl App {
         };
         // A 5 px bar, 4 px away from the edge.
         let slot = self.edge_rect(along, 9.0);
-        let bar = match self.settings.edge {
+        let bar = match self.edge() {
             Edge::Top => Rect::new(slot.x, slot.y + 4.0, slot.w, 5.0),
             Edge::Bottom => Rect::new(slot.x, slot.y, slot.w, 5.0),
             Edge::Left => Rect::new(slot.x + 4.0, slot.y, 5.0, slot.h),
@@ -1924,7 +2132,7 @@ impl App {
     fn draw_collapsed(&mut self, goal: Rect, t: f64) {
         let mouse = self.mouse;
         let compact = self.look() == NotchStyle::Compact;
-        let vertical = self.settings.edge.vertical();
+        let vertical = self.edge().vertical();
         let side = self.mascot_side();
         let mood_t = (t - self.mood_since) as f32;
         let fade = (mood_t / 0.6).clamp(0.0, 1.0);
@@ -2310,6 +2518,7 @@ impl App {
     }
 
     pub fn move_to_point(&mut self, p: POINT) {
+        self.undock();
         unsafe {
             let mon = MonitorFromPoint(p, MONITOR_DEFAULTTONEAREST);
             let mut mi = MONITORINFO { cbSize: std::mem::size_of::<MONITORINFO>() as u32, ..Default::default() };
@@ -2344,6 +2553,7 @@ impl App {
 
     /// Tray "Position" menu: jump to an edge (keeping the position along it).
     pub fn set_edge(&mut self, edge: Edge, center: bool) {
+        self.undock();
         self.settings.edge = edge;
         if center {
             self.settings.pos = 0.5;
@@ -3438,7 +3648,7 @@ pub fn selftest() -> String {
                     tight.push(s);
                 }
             }
-            if a.gfx.measure("Mascot (Full style)", 11.5, Weight::Semi) > 372.0 - 3.0 * 54.0 - 66.0 {
+            if a.gfx.measure("Mascot", 11.5, Weight::Semi) > 372.0 - 3.0 * 54.0 - 66.0 - 74.0 {
                 tight.push("mascot label");
             }
             for i in 0..a.modules.len() {
@@ -3943,6 +4153,8 @@ pub fn selftest() -> String {
             };
             out += &format!("INFO foreground window maximized right now: {real}\n");
         }
+        // Taskbar mascot placement (pure layout; the window itself needs his taskbar).
+        out += &format!("{:<4} taskbar mascot: left corner, right of the weather, beside the tray, hidden when it can't fit\n", if crate::taskbar::self_check() { "OK" } else { "FAIL" });
         // Music: a refused prev/next falls back to the media key.
         out += &format!("{:<4} music: prev/next/play fall back to the media keys when the player refuses\n", if crate::modules::music::test_fallback() { "OK" } else { "FAIL" });
         // Copy toast ("Show what I copy"): off by default; text, picture and
@@ -5178,9 +5390,24 @@ pub fn render_docs(dir: &std::path::Path) -> String {
         a.expanded = true;
         a.tab = music;
         shot(a, dir, "edge_left_panel");
+        // Taskbar mode: the panel opens up from the bottom-left corner.
+        a.settings.edge = Edge::Bottom;
+        a.anchor = 0.0;
+        shot(a, dir, "edge_bottom_panel");
         a.expanded = false;
         a.settings.edge = Edge::Top;
         a.anchor = CANVAS_W / 2.0;
+        // The taskbar mascot on its own (no notch around it).
+        for (k, m) in [("cat", Mascot::Cat), ("eyes", Mascot::Eyes)] {
+            a.gfx.begin(a.scale);
+            {
+                let mut hits = Vec::new();
+                let mut ui = Ui { g: &mut a.gfx, hits: &mut hits, module: usize::MAX - 9, mouse: (-1e4, -1e4), t: 1.0 };
+                mascot::draw(&mut ui, Rect::new(20.0, 20.0, 58.0, 42.0), m, Mood::Eyes, 1.0, (0.6, 0.2));
+            }
+            a.gfx.end_and_present(a.hwnd, a.origin.0, a.origin.1);
+            write_raw(a, &dir.join(format!("taskbar_mascot_{k}.raw")), None);
+        }
 
         // Hover-to-open animation at 1x for the README GIF.
         a.scale = 1.0;
@@ -5591,6 +5818,7 @@ fn settings_tip(id: u32) -> &'static str {
         S_MASCOT => "Show the clock instead of a mascot",
         i if (S_MASCOT + 1..S_MASCOT + 20).contains(&i) => "Use this mascot when the notch is idle",
         S_MASCOT_ALWAYS => "Keep the mascot out all the time (Full style)",
+        S_TASKBAR_PET => "Move the mascot to the taskbar corner; the notch hides and its panel opens above the mascot",
         i if (S_MASCOT_POS..S_MASCOT_POS + 3).contains(&i) => "Where the mascot sits in the notch",
         i if (S_SOUND..S_SOUND + 10).contains(&i) => "Use this sound for reminders (plays it once)",
         90 => "Style, startup and updates",

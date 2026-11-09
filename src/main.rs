@@ -21,6 +21,7 @@ mod mascot;
 mod modules;
 mod sound;
 mod store;
+mod taskbar;
 mod time;
 mod tray;
 mod ui;

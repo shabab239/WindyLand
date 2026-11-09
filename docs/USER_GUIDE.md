@@ -253,6 +253,12 @@ Pick one in **Settings > Mascot**: Eyes, Cat, Ghost, Robot, Sparky (an electric 
 
 - **Always** shows the mascot all the time instead of waiting for a quiet moment, even next to music or a timer.
 - **Left**, **Center** or **Right** places it in the notch. At the left or right, the clock (or the music, timer or prayer countdown) sits beside it; the notch grows a little to make room. This applies on the top and bottom edges.
+- **Taskbar** moves the mascot onto the Windows taskbar instead, into the empty corner where the Widgets weather goes (to the right of the weather if you have it on). The notch at the screen edge then hides:
+  - **Hover** the mascot and the panel opens right above it; move away and it closes. **Click** opens it too, **right-click** opens Settings.
+  - Alerts (timers, reminders, notifications) pop up above the mascot.
+  - With the taskbar icons on the left, the corner holds Start, so the mascot sits just left of the clock instead.
+  - With an auto-hidden taskbar, or during a full-screen game or video, the mascot hides and the notch comes back to its usual place.
+  - To go back to the notch, click **Taskbar** again, or pick a style or position (or right-drag the notch).
 
 ## Settings and your data
 

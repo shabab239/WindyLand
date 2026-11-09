@@ -102,19 +102,29 @@ def make(data, run, read_raw, wallpaper, fake_windows, rounded_mask, font):
         page(c, m, title, sub, chips).save(IMAGES / f"{name}.png")
         print("  ", name)
 
-    # Hero: a collage, so the first image shows how much is in it.
-    tiles = [
-        ("panel_lyrics", "Music + synced lyrics"),
-        ("panel_agents", "AI agents: Hermes, Claude Code, Codex"),
-        ("panel_tools_color", "Color picker and tools"),
-        ("panel_monitor", "System monitor"),
-        ("panel_clipboard", "Clipboard: click to paste"),
+    # Hero: every panel at a glance (a collage), so the first image shows
+    # how much is in it.
+    pairs = [
+        [("panel_agents", "AI agents: Hermes, Claude Code, Codex"), ("panel_tools_color", "Tools: color picker, calculator, QR, converter")],
+        [("panel_monitor", "System monitor"), ("panel_clipboard", "Clipboard: click to paste")],
+        [("panel_timer", "Timer and stopwatch"), ("panel_pomodoro", "Pomodoro")],
+        [("panel_todo", "To-do with reminders"), ("panel_water", "Water reminder")],
+        [("panel_prayer", "Prayer times"), ("panel_shelf", "File shelf and screenshots")],
     ]
     cw = W - 2 * PAD
     gap = 22
     big_w = (cw - gap) * 58 // 100
     side_w = cw - gap - big_w
     col2 = (cw - gap) // 2
+
+    def badge(img, label, h, top=False, right=False):
+        d = ImageDraw.Draw(img)
+        f = font(21, "semibold")
+        tw = d.textlength(label, font=f)
+        y0 = 14 if top else h - 52
+        x0 = img.width - tw - 46 if right else 16
+        d.rounded_rectangle((x0, y0, x0 + tw + 30, y0 + 38), 19, fill=(0, 0, 0, 150))
+        d.text((x0 + 15, y0 + 19), label, font=f, fill=TEXT, anchor="lm")
 
     def tile(raw, label, w, h, seed):
         """A desktop tile with the panel dropping from its top edge."""
@@ -123,48 +133,80 @@ def make(data, run, read_raw, wallpaper, fake_windows, rounded_mask, font):
         scale = min((w - 36) / img.width, (h - 64) / img.height, 1.0)
         img = img.resize((round(img.width * scale), round(img.height * scale)), Image.LANCZOS)
         wp.alpha_composite(img, ((w - img.width) // 2, 0))
-        d = ImageDraw.Draw(wp)
-        f = font(21, "semibold")
-        tw = d.textlength(label, font=f)
-        d.rounded_rectangle((16, h - 52, 16 + tw + 30, h - 14), 19, fill=(0, 0, 0, 150))
-        d.text((31, h - 33), label, font=f, fill=TEXT, anchor="lm")
+        badge(wp, label, h)
         return wp
 
     # Row 1: lyrics (big) and two alerts + the closed notch on the side.
     big_h = 420
-    row1 = tile(tiles[0][0], tiles[0][1], big_w, big_h, 0.0)
+    row1 = tile("panel_lyrics", "Music + synced lyrics", big_w, big_h, 0.0)
     side = wallpaper(side_w, big_h, 1.3)
     y = 0
     side_imgs = [shot(r) for r in ["collapsed_full_music", "toast_agent", "toast_notification"]]
     fit = min((side_w - 30) / max(i.width for i in side_imgs), (big_h - 70) / sum(i.height + 6 for i in side_imgs), 1.0)
     for img in side_imgs:
-        s = fit
-        img = img.resize((round(img.width * s), round(img.height * s)), Image.LANCZOS)
+        img = img.resize((round(img.width * fit), round(img.height * fit)), Image.LANCZOS)
         side.alpha_composite(img, ((side_w - img.width) // 2, y))
         y += img.height + 6
-    d = ImageDraw.Draw(side)
-    f = font(21, "semibold")
-    label = "Alerts drop out of the notch"
-    tw = d.textlength(label, font=f)
-    d.rounded_rectangle((16, big_h - 52, 16 + tw + 30, big_h - 14), 19, fill=(0, 0, 0, 150))
-    d.text((31, big_h - 33), label, font=f, fill=TEXT, anchor="lm")
+    badge(side, "Alerts drop out of the notch", big_h)
+
+    # Last row: the mascot on the Windows taskbar, the panel opening above it.
     small_h = 330
-    rows = [tiles[1:3], tiles[3:5]]
-    total_h = big_h + 2 * (small_h + gap)
+    tb_h = 360
+
+    def taskbar_tile(w, h):
+        wp = wallpaper(w, h, 2.2)
+        bar = 64
+        layer = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+        d = ImageDraw.Draw(layer)
+        d.rectangle((0, h - bar, w, h), fill=(28, 30, 38, 255))
+        d.line((0, h - bar, w, h - bar), fill=(70, 74, 88, 255), width=1)
+        # Centred app icons, then the clock on the right, like Windows 11.
+        icons = [(0, 120, 215), (240, 240, 240), (255, 185, 0), (16, 124, 16), (232, 17, 35), (125, 85, 199), (0, 183, 195)]
+        s, g = 38, 14
+        x = (w - (len(icons) * s + (len(icons) - 1) * g)) // 2
+        for c in icons:
+            d.rounded_rectangle((x, h - bar + 13, x + s, h - bar + 13 + s), 9, fill=c + (255,))
+            x += s + g
+        f = font(17)
+        d.text((w - 24, h - bar / 2 - 10), "4:20 PM", font=f, fill=TEXT, anchor="rm")
+        d.text((w - 24, h - bar / 2 + 11), "9 Nov 2026", font=f, fill=DIM, anchor="rm")
+        wp.alpha_composite(layer)
+        # The mascot in the corner.
+        m = shot("taskbar_mascot_cat")
+        k = (bar - 10) / m.height
+        m = m.resize((round(m.width * k), round(m.height * k)), Image.LANCZOS)
+        wp.alpha_composite(m, (14, h - bar + 5))
+        # The panel above it.
+        p = shot("edge_bottom_panel")
+        k = min((h - bar - 12) / p.height, (w * 0.56) / p.width, 1.0)
+        p = p.resize((round(p.width * k), round(p.height * k)), Image.LANCZOS)
+        wp.alpha_composite(p, (6, h - bar - p.height))
+        d = ImageDraw.Draw(wp)
+        # Text on the right half, where the screen is empty.
+        tx = round(w * 0.6)
+        d.text((tx, 70), "New: a mascot on your taskbar", font=font(34, "bold"), fill=TEXT)
+        d.text((tx, 122), "It lives in the empty corner, like the weather.", font=font(22), fill=TEXT)
+        d.text((tx, 154), "Hover it and the panel opens above it.", font=font(22), fill=TEXT)
+        return wp
+
+    total_h = big_h + len(pairs) * (small_h + gap) + tb_h + gap
     collage = Image.new("RGBA", (cw, total_h), (0, 0, 0, 0))
     collage.paste(row1, (0, 0), rounded_mask(big_w, big_h, 22))
     collage.paste(side, (big_w + gap, 0), rounded_mask(side_w, big_h, 22))
-    for r, row in enumerate(rows):
+    y = big_h + gap
+    for r, row in enumerate(pairs):
         for k, (raw, label) in enumerate(row):
             t = tile(raw, label, col2, small_h, 0.4 + r * 0.9 + k * 0.33)
-            collage.paste(t, (k * (col2 + gap), big_h + gap + r * (small_h + gap)), rounded_mask(col2, small_h, 22))
+            collage.paste(t, (k * (col2 + gap), y), rounded_mask(col2, small_h, 22))
+        y += small_h + gap
+    collage.paste(taskbar_tile(cw, tb_h), (0, y), rounded_mask(cw, tb_h, 22))
     # The website shows the collage alone (its own title is above it).
     collage.save(IMAGES / "hero-collage.png")
     hero = Image.new("RGBA", (W, total_h + 2 * PAD), BG + (255,))
     hero.alpha_composite(collage, (PAD, PAD))
     page_img = page_chips(hero, "WindyLand", "A Dynamic Island for Windows: music, AI agents, tools, reminders and more. Free and open source.",
                           ["Music + lyrics", "AI agents", "Color picker", "Calculator", "QR codes", "Converter", "System monitor", "Clipboard",
-                           "Screenshots", "File shelf", "Notifications", "Prayer times", "Timer", "Pomodoro", "To-do", "Water", "8 mascots"])
+                           "Screenshots", "File shelf", "Notifications", "Prayer times", "Timer", "Pomodoro", "To-do", "Water", "8 mascots", "Taskbar mascot"])
     page_img.save(IMAGES / "hero.png")
     print("   hero")
 

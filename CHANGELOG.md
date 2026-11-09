@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.1.21
+
+- Taskbar mascot: Settings > Mascot > **Taskbar** moves the mascot into the
+  empty corner of the Windows taskbar, where the Widgets weather goes (just
+  right of the weather when that is on; beside the clock when the taskbar
+  icons are on the left). The notch at the screen edge hides; hover the
+  mascot and the panel opens right above it, click it to open, right-click
+  for Settings. Alerts pop up there too. Picking a style or position, or
+  dragging the notch, brings the notch back.
+- README and website: one picture with every panel, and a What's new box on
+  the website. The demo video is no longer shown.
+
 ## 0.1.20
 
 - Makes room for maximized windows (Settings > General, on by default):

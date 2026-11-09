@@ -10,7 +10,6 @@ reminders, a water reminder, a file shelf, clipboard history and mic and
 camera in-use dots, all in a small pill at the edge of your screen. Hover to
 open, move away to close. Free and open source.
 
-<p align="center"><img src="docs/images/demo.gif" alt="WindyLand demo: notch styles, music and lyrics, every tab, notifications, settings" width="900"></p>
 
 ## Features
 
@@ -82,7 +81,7 @@ Needs Rust (stable, GNU or MSVC toolchain).
 cargo build --release                       # target\release\windyland.exe
 .\target\release\windyland.exe --selftest   # headless checks
 .\build.ps1                                 # build + icon + self-test + installer (Inno Setup 6)
-python docs\tools\make_images.py            # regenerate the screenshots and demo (Pillow, numpy, ffmpeg)
+python docs\tools\make_images.py shots      # regenerate the screenshots (Pillow, numpy)
 ```
 
 Releases are built by GitHub Actions from the version tag

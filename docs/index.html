@@ -101,6 +101,16 @@
   .more { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 22px; }
   .chip { background: var(--card); border: 1px solid var(--line); border-radius: 999px; padding: 7px 15px; font-size: 14px; }
 
+  .news { background: var(--card); border: 1px solid var(--line); border-radius: 18px; padding: 24px 26px; }
+  .news-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 14px; margin-bottom: 14px; }
+  .news-head h2 { margin: 0; }
+  .ver { background: rgba(255, 159, 28, .14); color: var(--accent); font-weight: 700; font-size: 14px; border-radius: 999px; padding: 3px 12px; }
+  .news ul { margin: 0; padding-left: 20px; color: var(--dim); }
+  .news li { margin: 6px 0; }
+  .news li b { color: var(--text); }
+  .soon { margin: 16px 0 4px; padding-top: 14px; border-top: 1px solid var(--line); color: var(--dim); font-size: 15px; }
+  .soon b { color: var(--text); }
+
   .demo { border-radius: 16px; overflow: hidden; border: 1px solid var(--line); max-width: 900px; margin: 0 auto; }
 
   .privacy { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
@@ -145,11 +155,31 @@
       <span data-i18n="dl">Windows এর জন্য ডাউনলোড</span>
     </a>
     <div class="meta"><span id="dl-meta" data-i18n="meta">Windows 10 আর 11 · ফ্রি · admin access লাগে না</span> · <a href="https://github.com/shabab239/WindyLand/releases" data-i18n="all_versions">সব ভার্সন</a></div>
-    <img class="hero" src="images/hero-collage.png" alt="WindyLand: music with lyrics, alerts, AI agents, tools, system monitor and clipboard" width="1520" height="1124">
+    <img class="hero" src="images/hero-collage.png" alt="WindyLand: music with lyrics, alerts, AI agents, tools, system monitor and clipboard" width="1520" height="2562">
   </header>
 </div>
 
 <div class="wrap">
+  <section id="news">
+    <div class="news">
+      <div class="news-head">
+        <h2 data-i18n="news_h">নতুন কী এসেছে</h2>
+        <span class="ver" id="news-ver">0.1.21</span>
+      </div>
+      <ul>
+        <li data-i18n="n0"><b>টাস্কবারে mascot:</b> Settings &gt; Mascot &gt; Taskbar চাপলে mascot টাস্কবারের খালি কোণায় বসে, weather এর মতো। উপরের notch তখন লুকিয়ে যায়; mascot এর উপর মাউস রাখলেই তার উপরে প্যানেল খোলে।</li>
+      </ul>
+      <p class="soon" data-i18n="prev"><b>আগের আপডেটে (0.1.20):</b></p>
+      <ul>
+        <li data-i18n="n1"><b>Maximized অ্যাপের উপর notch সরু হয়ে যায়:</b> Chrome বা অন্য অ্যাপ ফুল উইন্ডোতে থাকলে notch একটা পাতলা বার হয়ে যায়, ক্লিক ভেতর দিয়ে চলে যায়, তাই ব্রাউজারের ট্যাব ঢাকা পড়ে না। বারের উপর মাউস রাখলেই খোলে।</li>
+        <li data-i18n="n2"><b>১২ ঘণ্টার ঘড়ি:</b> এখন থেকে 4:20 PM, চাইলে Settings থেকে 24 ঘণ্টায় ফেরানো যায়।</li>
+        <li data-i18n="n3"><b>কপি করলে ছোট্ট প্রিভিউ:</b> Android এর মতো, কী কপি করলেন notch এ এক নজর দেখায়। টেক্সট, ফাইলের নাম বা ছবির থাম্বনেইল। ডিফল্ট বন্ধ।</li>
+        <li data-i18n="n4"><b>স্ক্রিনশট আর color picker:</b> নেওয়ার সময় notch পুরো লুকিয়ে যায়, ছবিতে আর কিছু ঢাকা পড়ে না।</li>
+        <li data-i18n="n5"><b>গানের আগে-পরে:</b> কোনো প্লেয়ার previous/next না মানলে WindyLand নিজেই মিডিয়া কী চেপে দেয়।</li>
+      </ul>
+    </div>
+  </section>
+
   <section id="install">
     <h2 data-i18n="install_h">এক মিনিটে ইনস্টল</h2>
     <p class="sub" data-i18n="install_sub">ইনস্টলারটা মাত্র ৩ MB এর মতো। পরের আপডেটগুলো notch থেকেই এক ক্লিকে ইনস্টল হয়।</p>
@@ -194,11 +224,6 @@
     </div>
   </section>
 
-  <section>
-    <h2 data-i18n="demo_h">চলতে দেখুন</h2>
-    <p class="sub" data-i18n="demo_sub">স্টাইল, মিউজিক আর লিরিক্স, সব প্যানেল, অ্যালার্ট আর সেটিংস।</p>
-    <div class="demo"><img loading="lazy" src="images/demo.gif" alt="WindyLand demo" width="900"></div>
-  </section>
 
   <section>
     <h2 data-i18n="priv_h">আপনার ডেটা আপনার পিসিতেই থাকে</h2>
@@ -239,6 +264,14 @@
     dl: "Download for Windows",
     meta: "Windows 10 and 11 · free · no admin rights needed",
     all_versions: "all versions",
+    news_h: "What's new",
+    n1: "<b>Slims down over maximized apps:</b> with Chrome or any app maximized, the notch becomes a thin bar that clicks pass through, so your browser tabs stay reachable. Rest the mouse on the bar to open it.",
+    n2: "<b>12-hour clock:</b> 4:20 PM from now on; switch back to 24-hour in Settings.",
+    n3: "<b>A tiny preview of what you copy:</b> like Android, the notch shows what you just copied: the text, the file names or a picture thumbnail. Off by default.",
+    n4: "<b>Screenshots and the color picker:</b> the notch now hides completely while you capture, so nothing covers the picture.",
+    n5: "<b>Previous / next:</b> when a player ignores them, WindyLand presses the media key for you.",
+    n0: "<b>A mascot on your taskbar:</b> Settings &gt; Mascot &gt; Taskbar puts the mascot in the empty corner of the taskbar, like the weather. The notch at the top hides; hover the mascot and the panel opens right above it.",
+    prev: "<b>In the previous update (0.1.20):</b>",
     install_h: "Install in a minute",
     install_sub: "The installer is about 3 MB. Later updates install with one click from the notch.",
     s1_h: "Download",
@@ -274,8 +307,6 @@
     c1: "File shelf", c2: "Screenshots", c3: "Timer and stopwatch", c4: "Pomodoro", c5: "Water reminder",
     c6: "Volume, charging, Caps Lock", c7: "Bluetooth connects", c8: "Mic and camera dots", c9: "8 mascots",
     c10: "4 styles, any screen edge", c11: "Hides for full-screen games and movies",
-    demo_h: "See it move",
-    demo_sub: "Styles, music and lyrics, every panel, alerts and settings.",
     priv_h: "Your data stays on your PC",
     priv_sub: "No account, no tracking. <a href=\"https://github.com/shabab239/WindyLand/blob/main/PRIVACY.md\">Privacy policy</a>",
     p1: "<b>Two network requests</b>Lyrics from LRCLIB and the update check on GitHub. Nothing else goes online.",
