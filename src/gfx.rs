@@ -742,7 +742,16 @@ impl Gfx {
     }
 
     pub fn measure(&mut self, s: &str, size: f32, weight: Weight) -> f32 {
-        let Some(f) = self.format(size, weight, Align::Left, Family::Text, false) else {
+        self.measure_in(s, size, weight, Family::Text)
+    }
+
+    /// Width of `s` as `digits` draws it.
+    pub fn measure_digits(&mut self, s: &str, size: f32) -> f32 {
+        self.measure_in(s, size, Weight::Semi, Family::Mono)
+    }
+
+    fn measure_in(&mut self, s: &str, size: f32, weight: Weight, family: Family) -> f32 {
+        let Some(f) = self.format(size, weight, Align::Left, family, false) else {
             return 0.0;
         };
         unsafe {

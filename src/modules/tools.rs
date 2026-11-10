@@ -1534,6 +1534,10 @@ impl Module for Tools {
     fn size(&self) -> (f32, f32) {
         crate::modules::PANEL
     }
+    // Color, zones and converter grids need the full panel.
+    fn slim_min(&self) -> (f32, f32) {
+        crate::modules::PANEL
+    }
 
     fn tick(&mut self, ctx: &mut Ctx) {
         if let Some(at) = self.pick_at {

@@ -483,8 +483,9 @@ impl Module for Todo {
     fn draw_live(&mut self, ui: &mut Ui, left: Rect, right: Rect) {
         let now = unix_now();
         let n = self.tasks.iter().filter(|t| !t.done && t.due.map_or(false, |d| d <= now)).count();
-        ui.icon(glyph::ALARM, Rect::new(left.x, left.y, left.h, left.h), 13.0, col::YELLOW);
-        ui.text("Due", Rect::new(left.x + left.h + 4.0, left.y, left.w, left.h), 12.0, col::YELLOW, Weight::Semi, Align::Left);
+        let iw = if left.w < 80.0 { left.h.min(20.0) } else { left.h };
+        ui.icon(glyph::ALARM, Rect::new(left.x, left.y, iw, left.h), 13.0, col::YELLOW);
+        ui.text("Due", Rect::new(left.x + iw + 4.0, left.y, (left.w - iw - 4.0).max(0.0), left.h), 12.0, col::YELLOW, Weight::Semi, Align::Left);
         ui.text(&format!("{n} task{}", if n == 1 { "" } else { "s" }), right, 12.0, col::TEXT, Weight::Semi, Align::Right);
     }
 }

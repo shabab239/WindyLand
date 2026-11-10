@@ -324,7 +324,8 @@ impl Module for Monitor {
         let Some(s) = self.latest() else { return };
         let size = (left.h * 0.46).clamp(9.0, 12.0);
         let mut l = left;
-        ui.icon(ICON, l.cut_left(left.h, 2.0), (left.h * 0.46).min(12.0), C_CPU);
+        let iw = if left.w < 80.0 { left.h.min(20.0) } else { left.h };
+        ui.icon(ICON, l.cut_left(iw, 2.0), (left.h * 0.46).min(12.0), C_CPU);
         ui.text(&format!("{:.0}%", s.cpu), l, size, col::TEXT, Weight::Semi, Align::Left);
         ui.text(&format!("\u{2193} {}", speed_short(s.down)), right, size, C_DOWN, Weight::Semi, Align::Right);
     }

@@ -1,5 +1,23 @@
 # Changelog
 
+## Unreleased
+
+- The clock now stays in the middle of the closed notch while something is
+  live: music (between the album art and the equaliser), the timer and
+  stopwatch, Pomodoro, prayer countdown, due tasks, AI agents and the
+  system monitor. It is always centred on the notch. Top and bottom
+  edges; a centred mascot keeps its spot.
+- New notch style, **Slim**, between Full and Compact (Settings > Notch
+  style, and in the welcome tour): Full's look and height, but narrower.
+  The resting clock is 120 wide instead of 200, and while something is
+  live (music, timer, stopwatch, Pomodoro, prayer, to-do, AI agents,
+  monitor) it is always 200 instead of 300, with the clock in the exact
+  middle. Tight labels shorten instead of moving the clock: Stopwatch
+  shows as "Watch", an agent's "Needs you" as "OK?". The open panel is narrower and a little shorter too
+  (about 464 x 198 instead of 552 x 230), with a slimmer tab bar. Tools
+  and the Water settings page keep Full's panel size so nothing gets cut
+  off; Settings and the welcome tour are unchanged.
+
 ## 0.1.21
 
 - Taskbar mascot: Settings > Mascot > **Taskbar** moves the mascot into the

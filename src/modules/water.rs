@@ -301,6 +301,13 @@ impl Module for Water {
     fn size(&self) -> (f32, f32) {
         (460.0, if self.settings_page { 172.0 } else { 128.0 })
     }
+    fn slim_min(&self) -> (f32, f32) {
+        if self.settings_page {
+            (0.0, crate::modules::PANEL.1)
+        } else {
+            (0.0, 0.0)
+        }
+    }
 
     fn tick(&mut self, ctx: &mut Ctx) {
         let now = ctx.now;

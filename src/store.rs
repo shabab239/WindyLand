@@ -70,6 +70,8 @@ pub fn unesc(s: &str) -> String {
 pub enum NotchStyle {
     /// Black notch with clock, live activities and the mascot.
     Full,
+    /// Like Full but narrower; the open panel is also a little shorter.
+    Slim,
     /// A smaller, shorter notch with clock and live activities.
     Compact,
     /// A thin floating bar, like the Android gesture pill. Tinted when
@@ -80,10 +82,11 @@ pub enum NotchStyle {
 }
 
 impl NotchStyle {
-    pub const ALL: [NotchStyle; 4] = [NotchStyle::Full, NotchStyle::Compact, NotchStyle::Pill, NotchStyle::Hidden];
+    pub const ALL: [NotchStyle; 5] = [NotchStyle::Full, NotchStyle::Slim, NotchStyle::Compact, NotchStyle::Pill, NotchStyle::Hidden];
     pub fn key(self) -> &'static str {
         match self {
             NotchStyle::Full => "full",
+            NotchStyle::Slim => "slim",
             NotchStyle::Compact => "compact",
             NotchStyle::Pill => "pill",
             NotchStyle::Hidden => "hidden",
@@ -92,6 +95,7 @@ impl NotchStyle {
     pub fn label(self) -> &'static str {
         match self {
             NotchStyle::Full => "Full notch",
+            NotchStyle::Slim => "Slim notch",
             NotchStyle::Compact => "Compact notch",
             NotchStyle::Pill => "Pill (thin bar)",
             NotchStyle::Hidden => "Hidden (hover top edge)",
@@ -104,11 +108,15 @@ impl NotchStyle {
     /// Smaller styles wait longer so reaching for browser tabs doesn't open it.
     pub fn hover_delay(self) -> f64 {
         match self {
-            NotchStyle::Full => 0.0,
+            NotchStyle::Full | NotchStyle::Slim => 0.0,
             NotchStyle::Compact => 0.15,
             NotchStyle::Pill => 0.3,
             NotchStyle::Hidden => 0.35,
         }
+    }
+    /// Full and Slim: the black notch with the clock, music and a mascot.
+    pub fn full_like(self) -> bool {
+        matches!(self, NotchStyle::Full | NotchStyle::Slim)
     }
 }
 

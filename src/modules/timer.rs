@@ -207,6 +207,18 @@ impl Timer {
     }
 }
 
+impl Timer {
+    /// Colour, text and progress (-1 for the stopwatch) of the live activity.
+    fn live_text(&self) -> (Color, String, f32) {
+        if self.running {
+            let rem = self.remaining();
+            (C_TIMER, clock(rem), (1.0 - rem / self.duration.max(1.0)) as f32)
+        } else {
+            (C_WATCH, watch(self.elapsed()), -1.0)
+        }
+    }
+}
+
 impl Module for Timer {
     fn tip(&self, id: u32) -> &'static str {
         match id {
@@ -370,25 +382,31 @@ impl Module for Timer {
     }
 
     fn draw_live(&mut self, ui: &mut Ui, left: Rect, right: Rect) {
-        let (c, text, frac) = if self.running {
-            let rem = self.remaining();
-            (C_TIMER, clock(rem), (1.0 - rem / self.duration.max(1.0)) as f32)
-        } else {
-            (C_WATCH, watch(self.elapsed()), -1.0)
-        };
-        let ic = Rect::new(left.x, left.y, left.h, left.h);
+        let (c, text, frac) = self.live_text();
+        // Narrow wings (Slim): a tighter box for the ring.
+        let tight = left.w < 80.0;
+        let ic = Rect::new(left.x, left.y, if tight { left.h.min(18.0) } else { left.h }, left.h);
         if frac >= 0.0 {
-            let rad = (left.h / 2.0 - 3.0).min(9.0);
-            ui.stroke_circle(ic.cx(), ic.cy(), rad, c.with_a(0.25), 2.5);
-            ui.arc(ic.cx(), ic.cy(), rad, 0.0, std::f32::consts::TAU * frac, c, 2.5);
+            let rad = (left.h / 2.0 - 3.0).min(9.0).min(ic.w / 2.0 - 2.5);
+        // Slim: a smaller ring with a thinner line.
+        let line = if tight && left.h >= 22.0 { 2.0 } else { 2.5 };
+            ui.stroke_circle(ic.cx(), ic.cy(), rad, c.with_a(0.25), line);
+            ui.arc(ic.cx(), ic.cy(), rad, 0.0, std::f32::consts::TAU * frac, c, line);
         } else {
             ui.icon(glyph::TIMER, ic, (left.h * 0.55).min(13.0), c);
         }
         if left.h >= 22.0 {
-            let lbl = Rect::new(ic.r() + 6.0, left.y, left.w - ic.w - 6.0, left.h);
-            ui.text(if self.running { "Timer" } else { "Stopwatch" }, lbl, 12.0, c, Weight::Semi, Align::Left);
+            let gap = if tight { 5.0 } else { 6.0 };
+            let room = left.w - ic.w - gap;
+            let name = if self.running { "Timer" } else if ui.measure("Stopwatch", 12.0, Weight::Semi) <= room { "Stopwatch" } else { "Watch" };
+            if ui.measure(name, 12.0, Weight::Semi) <= room {
+                let lbl = Rect::new(ic.r() + gap, left.y, room, left.h);
+                ui.text(name, lbl, 12.0, c, Weight::Semi, Align::Left);
+            }
         }
-        ui.digits(&text, right, if left.h < 22.0 { 12.0 } else { 14.0 }, col::TEXT, Align::Right);
+        // An hour-long timer gets a size smaller if it would not fit.
+        let size = if left.h < 22.0 || ui.measure_digits(&text, 14.0) > right.w { 12.0 } else { 14.0 };
+        ui.digits(&text, right, size, col::TEXT, Align::Right);
     }
 
     fn animating(&self) -> bool {

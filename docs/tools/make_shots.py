@@ -231,13 +231,13 @@ def make(data, run, read_raw, wallpaper, fake_windows, rounded_mask, font):
     single("tools-convert", "panel_tools_convert", "Converter", "Units, including katha, bigha and maund, and world time zones.", ["Length to data", "Bangladesh units", "12 cities"])
     single("tools-zones", "panel_tools_zones", "Time zones", "What time it is in 12 cities, now or an hour from now.", ["Daylight saving handled", "Pick any city as base"])
     single("settings-privacy", "settings_privacy", "Privacy settings", "Notifications, mic and camera dots, and clipboard history: all opt-in.", ["Windows notifications", "Hide message text", "Mute apps"])
-    single("tour", "tour_style", "Welcome tour", "First run asks how the notch should look, then where it sits.", ["Full", "Compact", "Pill", "Hidden"])
+    single("tour", "tour_style", "Welcome tour", "First run asks how the notch should look, then where it sits.", ["Full", "Slim", "Compact", "Pill", "Hidden"])
     single("notifications", "toast_notification", "Windows notifications", "Other apps' notifications drop out of the notch, with their icon and colour.", ["Click to open the app", "Mute an app", "Respects Do Not Disturb"], min_h=300)
 
-    # Styles: four small cards.
+    # Styles: five small cards, two per row.
     cw = (W - 2 * PAD - 30) // 2
-    grid = Image.new("RGBA", (W - 2 * PAD, 2 * 230 + 30), (0, 0, 0, 0))
-    styles = [("collapsed_full_music", "Full"), ("collapsed_compact_music", "Compact"), ("collapsed_pill_music", "Pill"), (None, "Hidden")]
+    grid = Image.new("RGBA", (W - 2 * PAD, 3 * 230 + 60), (0, 0, 0, 0))
+    styles = [("collapsed_full_music", "Full"), ("collapsed_slim_music", "Slim"), ("collapsed_compact_music", "Compact"), ("collapsed_pill_music", "Pill"), (None, "Hidden")]
     for i, (raw, label) in enumerate(styles):
         wp = wallpaper(cw, 230, i * 0.7)
         if raw:

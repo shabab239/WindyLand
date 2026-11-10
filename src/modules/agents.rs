@@ -972,18 +972,23 @@ impl Module for Agents {
         let now = unix_now();
         let Some(s) = self.top(now).cloned() else { return };
         let c = if s.state == State::Working { ACCENT } else { state_color(s.state) };
+        // Narrow wings (Slim): tighter icon and dot, "OK?" for "Needs you".
+        let tight = left.w < 80.0;
         let mut l = left;
-        let ic = l.cut_left(left.h, 4.0);
+        let ic = l.cut_left(if tight { left.h.min(20.0) } else { left.h }, 4.0);
         ui.icon(ICON, ic, (left.h * 0.5).min(13.0), c);
         let size = (left.h * 0.46).clamp(9.0, 12.0);
-        let text = match s.state {
+        let mut text = match s.state {
             State::Working => fmt_dur(now - s.started),
             other => state_label(other).to_string(),
         };
+        if s.state == State::NeedsYou && ui.measure(&text, size, Weight::Semi) > l.w {
+            text = "OK?".into();
+        }
         ui.text(&text, l, size, c, Weight::Semi, Align::Left);
         let mut rr = right;
         if s.state == State::Working {
-            let d = rr.cut_right(rr.h * 0.5, 2.0);
+            let d = rr.cut_right(if tight { 8.0 } else { rr.h * 0.5 }, 2.0);
             let pulse = 0.45 + 0.4 * ((now * 1.0).fract() < 0.5) as i32 as f32;
             ui.circle(d.cx(), d.cy(), 3.0, c.with_a(pulse));
         }

@@ -260,14 +260,20 @@ impl Module for Pomodoro {
     fn draw_live(&mut self, ui: &mut Ui, left: Rect, right: Rect) {
         let c = self.phase.color();
         let small = left.h < 22.0;
-        let ic = Rect::new(left.x, left.y, left.h, left.h);
-        let rad = (left.h / 2.0 - 3.0).min(9.0);
+        // Narrow wings (Slim): a tighter box for the ring.
+        let tight = left.w < 80.0;
+        let ic = Rect::new(left.x, left.y, if tight { left.h.min(18.0) } else { left.h }, left.h);
+        let rad = (left.h / 2.0 - 3.0).min(9.0).min(ic.w / 2.0 - 2.5);
+        // Slim: a smaller ring with a thinner line.
+        let line = if tight && left.h >= 22.0 { 2.0 } else { 2.5 };
+        let gap = if tight { 5.0 } else { 6.0 };
+        let name = if self.phase == Phase::Focus { "Focus" } else { "Break" };
+        let labelled = !small && ui.measure(name, 12.0, Weight::Semi) <= left.w - ic.w - gap;
         let frac = 1.0 - (self.remaining() / self.total()) as f32;
-        ui.stroke_circle(ic.cx(), ic.cy(), rad, c.with_a(0.25), 2.5);
-        ui.arc(ic.cx(), ic.cy(), rad, 0.0, std::f32::consts::TAU * frac, c, 2.5);
-        if !small {
-            let lbl = Rect::new(ic.r() + 6.0, left.y, left.w - ic.w - 6.0, left.h);
-            let name = if self.phase == Phase::Focus { "Focus" } else { "Break" };
+        ui.stroke_circle(ic.cx(), ic.cy(), rad, c.with_a(0.25), line);
+        ui.arc(ic.cx(), ic.cy(), rad, 0.0, std::f32::consts::TAU * frac, c, line);
+        if labelled {
+            let lbl = Rect::new(ic.r() + gap, left.y, left.w - ic.w - gap, left.h);
             ui.text(name, lbl, 12.0, c, Weight::Semi, Align::Left);
         }
         ui.digits(&mmss(self.remaining()), right, if small { 12.0 } else { 14.0 }, col::TEXT, Align::Right);

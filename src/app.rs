@@ -33,6 +33,18 @@ const TAB_H: f32 = 30.0;
 /// Space between tab icons (tight: there are up to a dozen tabs).
 const TAB_GAP: f32 = 2.0;
 const PAD: f32 = 16.0;
+/// Slim style: a shorter tab bar, tighter padding, and the panel content
+/// this much narrower and shorter than Full's.
+const SLIM_TAB_H: f32 = 26.0;
+const SLIM_PAD: f32 = 12.0;
+const SLIM_TRIM: (f32, f32) = (80.0, 24.0);
+/// Slim closed notch while something is live: its width (the same for
+/// every activity), edge padding, the space between each wing and the
+/// clock in the middle, and the strip a side mascot adds.
+const SLIM_LIVE_W: f32 = 200.0;
+const SLIM_WING_PAD: f32 = 10.0;
+const SLIM_GAP: f32 = 6.0;
+const SLIM_MASCOT_STRIP: f32 = 62.0;
 /// Tab bar hits use this module index.
 const APP_HIT: usize = usize::MAX;
 /// Toast action hits use this module index; the id is the action slot.
@@ -70,7 +82,7 @@ const TOUR_PANELS: [(&str, &str, &str); 4] = [
 
 /// Tour step 4: what's in Settings, at a glance.
 const TOUR_SETTINGS: [(&str, &str, &str); 8] = [
-    ("\u{E771}", "Style & edge", "4 looks; slims over full windows"),
+    ("\u{E771}", "Style & edge", "5 looks; slims over full windows"),
     ("\u{E76E}", "Mascot", "In the notch or taskbar"),
     (glyph::VOLUME, "Sounds", "Pick a chime, or none"),
     ("\u{E8A9}", "Panels", "Hide what you don't use"),
@@ -805,8 +817,23 @@ impl App {
             return NotchStyle::Hidden;
         }
         match self.settings.style {
-            NotchStyle::Full | NotchStyle::Compact if self.yielding() => NotchStyle::Pill,
+            NotchStyle::Full | NotchStyle::Slim | NotchStyle::Compact if self.yielding() => NotchStyle::Pill,
             s => s,
+        }
+    }
+
+    /// The open panel uses Slim's smaller size (not for Settings or the
+    /// welcome tour, which keep theirs).
+    fn slim_panel(&self) -> bool {
+        self.settings.style == NotchStyle::Slim && !self.settings_open && self.onboarding.is_none()
+    }
+
+    /// Tab bar height and panel padding.
+    fn panel_metrics(&self) -> (f32, f32) {
+        if self.slim_panel() {
+            (SLIM_TAB_H, SLIM_PAD)
+        } else {
+            (TAB_H, PAD)
         }
     }
 
@@ -1003,7 +1030,7 @@ impl App {
     /// at the side picked in Settings (top and bottom edges, Full style).
     fn mascot_side(&self) -> Option<u8> {
         let st = &self.settings;
-        (st.style == NotchStyle::Full && !st.edge.vertical() && self.mood != Mood::Clock).then_some(st.mascot_pos)
+        (st.style.full_like() && !st.edge.vertical() && self.mood != Mood::Clock).then_some(st.mascot_pos)
     }
 
     /// Mascot state machine: clock -> eyes (notch idle) -> doze (user away)
@@ -1016,7 +1043,7 @@ impl App {
         }
         let idle = Self::system_idle_secs();
         let always = self.settings.mascot_always;
-        let next = if !self.settings.personality || (busy && !always) || self.look() != NotchStyle::Full {
+        let next = if !self.settings.personality || (busy && !always) || !self.look().full_like() {
             Mood::Clock
         } else {
             match self.mood {
@@ -1100,17 +1127,22 @@ impl App {
                     ONBOARD_SIZE
                 } else if self.settings_open {
                     SETTINGS_SIZE
+                } else if self.slim_panel() {
+                    let m = &self.modules[self.tab];
+                    let (mw, mh) = m.slim_min();
+                    ((m.size().0.max(modules::PANEL.0) - SLIM_TRIM.0).max(mw), (modules::PANEL.1 - SLIM_TRIM.1).max(mh))
                 } else {
                     (self.modules[self.tab].size().0.max(modules::PANEL.0), modules::PANEL.1)
                 };
-                let w = (w + 2.0 * PAD).clamp(380.0, CANVAS_W - 40.0);
-                let h = (h + TAB_H + PAD + 8.0).clamp(80.0, CANVAS_H - 20.0);
+                let (tab_h, pad) = self.panel_metrics();
+                let w = (w + 2.0 * pad).clamp(380.0, CANVAS_W - 40.0);
+                let h = (h + tab_h + pad + 8.0).clamp(80.0, CANVAS_H - 20.0);
                 panel(w, h, 26.0)
             }
             Mode::Toast => {
                 let has_actions = self.toast.as_ref().map_or(false, |t| !t.0.actions.is_empty());
                 let h = if has_actions { 104.0 } else { 66.0 };
-                panel(380.0, h, 24.0)
+                panel(if self.settings.style == NotchStyle::Slim { 340.0 } else { 380.0 }, h, 24.0)
             }
             Mode::Collapsed => {
                 let live = self.live_module().is_some();
@@ -1121,6 +1153,13 @@ impl App {
                     (NotchStyle::Full, false) => (200.0, 32.0, 12.0),
                     (NotchStyle::Full, true) if live => (130.0, 40.0, 14.0),
                     (NotchStyle::Full, true) => (100.0, 40.0, 14.0),
+                    // Slim: Full's height, narrower.
+                    // Live: one width for every activity, plus a side mascot's strip.
+                    (NotchStyle::Slim, false) if live => (SLIM_LIVE_W + if side_mascot { SLIM_MASCOT_STRIP } else { 0.0 }, 34.0, 13.0),
+                    (NotchStyle::Slim, false) if side_mascot => (150.0, 32.0, 12.0),
+                    (NotchStyle::Slim, false) => (120.0, 32.0, 12.0),
+                    (NotchStyle::Slim, true) if live => (110.0, 40.0, 14.0),
+                    (NotchStyle::Slim, true) => (80.0, 40.0, 14.0),
                     (NotchStyle::Compact, false) if live => (190.0, 22.0, 9.0),
                     (NotchStyle::Compact, false) => (96.0, 20.0, 8.0),
                     (NotchStyle::Compact, true) if live => (64.0, 26.0, 10.0),
@@ -1425,12 +1464,13 @@ impl App {
     /// glides with the shape) and the module or settings content (laid out
     /// in the final `goal` rect so it doesn't reflow while animating).
     fn draw_expanded(&mut self, notch: Rect, goal: Rect, t: f64) {
-        let r = self.content_rect(goal, 6.0, PAD, PAD);
-        let r = Rect::new(r.x, r.y + TAB_H + 8.0, r.w, r.h - TAB_H - 8.0);
-        let mut bar = self.content_rect(notch, 6.0, PAD, PAD).cut_top(TAB_H, 8.0);
+        let (tab_h, pad) = self.panel_metrics();
+        let r = self.content_rect(goal, 6.0, pad, pad);
+        let r = Rect::new(r.x, r.y + tab_h + 8.0, r.w, r.h - tab_h - 8.0);
+        let mut bar = self.content_rect(notch, 6.0, pad, pad).cut_top(tab_h, 8.0);
         let now = Now::get();
         let mouse = self.mouse;
-        let slot = TAB_H + TAB_GAP;
+        let slot = tab_h + TAB_GAP;
         let tabs = self.tab_list();
         self.tab_bar = bar;
         // The highlight pill glides to the selected tab (or the gear).
@@ -1456,19 +1496,19 @@ impl App {
         let indicators = self.indicators();
         {
             let mut ui = Ui { g: &mut self.gfx, hits: &mut self.hits, module: APP_HIT, mouse, t };
-            let pill = Rect::new(bar.x + self.pill_off, bar.y, TAB_H, TAB_H);
+            let pill = Rect::new(bar.x + self.pill_off, bar.y, tab_h, tab_h);
             if gp < 1.0 {
                 let fade = (1.0 - gp) * (1.0 - gp);
-                let (cx, cy) = (bar.x + sel_off + TAB_H / 2.0, bar.cy());
+                let (cx, cy) = (bar.x + sel_off + tab_h / 2.0, bar.cy());
                 for k in 0..5 {
-                    let rad = TAB_H * 0.5 + 1.0 + k as f32 * 3.0 + gp * 6.0;
+                    let rad = tab_h * 0.5 + 1.0 + k as f32 * 3.0 + gp * 6.0;
                     ui.circle(cx, cy, rad, accent.with_a(0.16 * fade * (1.0 - k as f32 / 5.0)));
                 }
             }
             let pill_c = col::TEXT.with_a(0.16).lerp(accent.with_a(0.42), (1.0 - gp) * 0.8);
-            ui.fill_rr(pill, TAB_H / 2.0, pill_c);
+            ui.fill_rr(pill, tab_h / 2.0, pill_c);
             for &i in &tabs {
-                let tr = bar.cut_left(TAB_H, TAB_GAP);
+                let tr = bar.cut_left(tab_h, TAB_GAP);
                 let m = &self.modules[i];
                 let sel = i == self.tab && !self.settings_open;
                 let fg = if sel && gp < 1.0 {
@@ -1484,7 +1524,7 @@ impl App {
             }
             // Settings gear, set slightly apart from the tabs.
             bar.cut_left(4.0, 0.0);
-            let gr = bar.cut_left(TAB_H, TAB_GAP);
+            let gr = bar.cut_left(tab_h, TAB_GAP);
             let fg = if self.settings_open { col::TEXT } else { col::DIM };
             ui.icon_btn(gr, glyph::SETTINGS, GEAR, 14.0, fg, None, if self.settings_open { "Close settings" } else { "Settings" });
             // Title of the current tab + date/time on the right. With many
@@ -1617,9 +1657,10 @@ impl App {
 
         label(&mut ui, left.cut_top(16.0, 4.0), "Notch style");
         let row = left.cut_top(26.0, 10.0);
-        for (i, (cell, s)) in row.columns(4, 6.0).into_iter().zip(NotchStyle::ALL).enumerate() {
+        for (i, (cell, s)) in row.columns(NotchStyle::ALL.len(), 6.0).into_iter().zip(NotchStyle::ALL).enumerate() {
             let name = match s {
                 NotchStyle::Full => "Full",
+                NotchStyle::Slim => "Slim",
                 NotchStyle::Compact => "Compact",
                 NotchStyle::Pill => "Pill",
                 NotchStyle::Hidden => "Hidden",
@@ -1942,8 +1983,8 @@ impl App {
 
         match step {
             0 => {
-                // Four tiles, each with a tiny screen showing that style.
-                for (i, (cell, s)) in body.columns(4, 10.0).into_iter().zip(NotchStyle::ALL).enumerate() {
+                // A tile per style, each with a tiny screen showing it.
+                for (i, (cell, s)) in body.columns(NotchStyle::ALL.len(), 10.0).into_iter().zip(NotchStyle::ALL).enumerate() {
                     let sel = st.style == s;
                     let hov = ui.hovered(cell);
                     let bg = if sel { accent.with_a(0.2) } else if hov { col::BTN_HOVER } else { col::BTN };
@@ -1961,6 +2002,11 @@ impl App {
                             ui.fill_rr(n, 5.0, col::NOTCH);
                             ui.text("12:30", n, 8.0, col::TEXT, Weight::Semi, Align::Center);
                         }
+                        NotchStyle::Slim => {
+                            let n = Rect::new(cx - 20.0, screen.y, 40.0, 13.0);
+                            ui.fill_rr(n, 5.0, col::NOTCH);
+                            ui.text("12:30", n, 8.0, col::TEXT, Weight::Semi, Align::Center);
+                        }
                         NotchStyle::Compact => ui.fill_rr(Rect::new(cx - 17.0, screen.y, 34.0, 8.0), 4.0, col::NOTCH),
                         NotchStyle::Pill => ui.fill_rr(Rect::new(cx - 15.0, screen.y + 3.0, 30.0, 3.0), 1.5, col::TEXT.with_a(0.8)),
                         NotchStyle::Hidden => {
@@ -1971,12 +2017,13 @@ impl App {
                     }
                     let (name, desc) = match s {
                         NotchStyle::Full => ("Full", "Clock, music, mascot"),
+                        NotchStyle::Slim => ("Slim", "Full, but narrower"),
                         NotchStyle::Compact => ("Compact", "A smaller notch"),
                         NotchStyle::Pill => ("Pill", "Just a thin bar"),
                         NotchStyle::Hidden => ("Hidden", "Invisible until hovered"),
                     };
                     ui.text(name, c.cut_top(16.0, 0.0), 12.5, if sel { col::TEXT } else { col::DIM }, Weight::Semi, Align::Center);
-                    ui.text(desc, c.cut_top(14.0, 0.0), 10.0, col::FAINT, Weight::Regular, Align::Center);
+                    ui.text_wrap(desc, c, 10.0, col::FAINT, Weight::Regular, Align::Center);
                     ui.hit_tip(cell, O_STYLE + i as u32, "");
                 }
             }
@@ -2137,12 +2184,16 @@ impl App {
         let mood_t = (t - self.mood_since) as f32;
         let fade = (mood_t / 0.6).clamp(0.0, 1.0);
         if let Some(i) = self.live_module() {
+            // Slim: the wings fill what the clock (or a centred mascot)
+            // leaves, so the clock stays in the exact middle.
+            let slim_mid = (self.look() == NotchStyle::Slim && !vertical)
+                .then(|| if side == Some(1) { 56.0 } else { self.gfx.measure(&Now::get().hhmm(), 14.0, Weight::Semi) + 2.0 });
             // A side mascot takes a strip of the (wider) notch; a centred one
             // sits between the two wings.
             let mut goal = goal;
             let mut mascot_r = None;
             if let Some(s) = side.filter(|s| *s != 1) {
-                let strip = 62.0;
+                let strip = SLIM_MASCOT_STRIP;
                 mascot_r = Some(if s == 0 {
                     Rect::new(goal.x + 10.0, goal.y + 2.0, strip - 4.0, goal.h - 4.0)
                 } else {
@@ -2156,8 +2207,15 @@ impl App {
                 let top = Rect::new(goal.cx() - s / 2.0, goal.y + 10.0, s, s);
                 let bottom = if compact { Rect::default() } else { Rect::new(goal.x + 2.0, goal.b() - 30.0, goal.w - 4.0, 18.0) };
                 (top, bottom)
+            } else if let Some(mid) = slim_mid {
+                let w = (goal.w / 2.0 - mid / 2.0 - SLIM_GAP - SLIM_WING_PAD).max(0.0);
+                (
+                    Rect::new(goal.x + SLIM_WING_PAD, goal.y + 2.0, w, goal.h - 4.0),
+                    Rect::new(goal.r() - SLIM_WING_PAD - w, goal.y + 2.0, w, goal.h - 4.0),
+                )
             } else {
-                let (wing, pad) = if compact { (68.0, 10.0) } else { (92.0, 12.0) };
+                let slim = self.look() == NotchStyle::Slim;
+                let (wing, pad) = if compact { (68.0, 10.0) } else if slim { (72.0, 10.0) } else { (92.0, 12.0) };
                 (
                     Rect::new(goal.x + pad, goal.y + 2.0, wing, goal.h - 4.0),
                     Rect::new(goal.r() - pad - wing, goal.y + 2.0, wing, goal.h - 4.0),
@@ -2168,6 +2226,20 @@ impl App {
             }
             let mut ui = Ui { g: &mut self.gfx, hits: &mut self.hits, module: i, mouse, t };
             self.modules[i].draw_live(&mut ui, left, right);
+            // Clock in the middle, as on the idle notch (music: art left,
+            // equaliser right; a timer: ring left, time left right), when
+            // there is room between the wings.
+            let size = if compact { 11.0 } else { 14.0 };
+            let time = Now::get().hhmm();
+            // A centred mascot takes the middle instead.
+            let centred = side == Some(1) && mascot_r.is_some();
+            let tw = ui.measure(&time, size, Weight::Semi) + 4.0;
+            if !centred && !vertical && right.x - left.r() >= tw {
+                // Always the middle of the notch (the wings are symmetric).
+                let cx = goal.cx();
+                let mid = Rect::new(cx - tw / 2.0, goal.y + 2.0, tw, goal.h - 4.0);
+                ui.text(&time, mid, size, col::TEXT, Weight::Semi, Align::Center);
+            }
             if let Some(mr) = mascot_r {
                 ui.alpha = fade;
                 draw_mascot(&mut ui, mr, self.settings.mascot, self.mood, t, self.origin, self.scale);
@@ -3495,10 +3567,10 @@ pub fn selftest() -> String {
                 let tgt = a.target();
                 a.cur = tgt;
                 a.render(tgt, 0.0);
-                a.hits.iter().filter(|h| h.module == ONBOARD && (O_STYLE..O_STYLE + 4).contains(&h.id)).count()
+                a.hits.iter().filter(|h| h.module == ONBOARD && (O_STYLE..O_STYLE + NotchStyle::ALL.len() as u32).contains(&h.id)).count()
             };
-            let ok = tiles == 4 && click(a, O_STYLE + 2) && a.settings.style == NotchStyle::Pill && crate::store::read("settings.txt").contains("style=pill");
-            out += &format!("{:<4} step 1 offers the 4 styles and picking Pill applies it\n", if ok { "OK" } else { "FAIL" });
+            let ok = tiles == 5 && click(a, O_STYLE + 3) && a.settings.style == NotchStyle::Pill && crate::store::read("settings.txt").contains("style=pill");
+            out += &format!("{:<4} step 1 offers the 5 styles and picking Pill applies it\n", if ok { "OK" } else { "FAIL" });
             let ok = click(a, O_NEXT) && a.onboarding == Some(1) && click(a, O_EDGE + 1) && a.settings.edge == Edge::Bottom && a.mode() == Mode::Expanded;
             out += &format!("{:<4} step 2 moves the notch and the tour stays open\n", if ok { "OK" } else { "FAIL" });
             let ok = click(a, O_NEXT) && a.onboarding == Some(2) && click(a, O_NEXT) && a.onboarding == Some(3);
@@ -3521,9 +3593,10 @@ pub fn selftest() -> String {
             out += &format!("{:<4} people updating from a version without the tour get it once\n", if ok { "OK" } else { "FAIL" });
             // Tour text fits: style tiles, tip cards, hints beside the buttons.
             let mut tight = Vec::new();
-            let tile_w = (ONBOARD_SIZE.0 - 8.0 - 30.0) / 4.0 - 16.0;
-            for s in ["Clock, music, mascot", "A smaller notch", "Just a thin bar", "Invisible until hovered"] {
-                if a.gfx.measure(s, 10.0, Weight::Regular) > tile_w {
+            // Five tiles; the line under each style may wrap to two lines.
+            let tile_w = (ONBOARD_SIZE.0 - 8.0 - 40.0) / 5.0 - 16.0;
+            for s in ["Clock, music, mascot", "Full, but narrower", "A smaller notch", "Just a thin bar", "Invisible until hovered"] {
+                if a.gfx.measure(s, 10.0, Weight::Regular) > tile_w * 1.8 {
                     tight.push(s);
                 }
             }
@@ -3681,8 +3754,49 @@ pub fn selftest() -> String {
             out += &format!("{:<4} picking a mascot applies and saves\n", if ok { "OK" } else { "FAIL" });
             let ok = click(a, S_MASCOT) && !a.settings.personality;
             out += &format!("{:<4} picking Clock turns the mascot off\n", if ok { "OK" } else { "FAIL" });
-            let ok = click(a, S_STYLE + 1) && a.settings.style == NotchStyle::Compact && crate::store::read("settings.txt").contains("style=compact");
+            let ok = click(a, S_STYLE + 2) && a.settings.style == NotchStyle::Compact && crate::store::read("settings.txt").contains("style=compact")
+                && click(a, S_STYLE + 1) && a.settings.style == NotchStyle::Slim && crate::store::read("settings.txt").contains("style=slim");
             out += &format!("{:<4} notch style chip applies and saves\n", if ok { "OK" } else { "FAIL" });
+            // Slim: narrower than Full, same closed height; the open panel is
+            // narrower and shorter, except Tools, which keeps Full's size.
+            {
+                let saved = (a.expanded, a.settings_open, a.tab, a.settings.edge);
+                a.settings.edge = Edge::Top;
+                a.settings_open = false;
+                let size = |a: &mut App, s: NotchStyle, open: bool, tab: usize| {
+                    a.settings.style = s;
+                    a.expanded = open;
+                    a.tab = tab;
+                    a.target()
+                };
+                let music = find(a, "Now Playing").unwrap_or(0);
+                let tools = find(a, "Tools").unwrap_or(0);
+                let (fc, sc) = (size(a, NotchStyle::Full, false, music), size(a, NotchStyle::Slim, false, music));
+                let (fo, so) = (size(a, NotchStyle::Full, true, music), size(a, NotchStyle::Slim, true, music));
+                let (ft, st) = (size(a, NotchStyle::Full, true, tools), size(a, NotchStyle::Slim, true, tools));
+                let ok = sc.0 < fc.0 && sc.1 == fc.1 && so.0 < fo.0 && so.1 < fo.1 && st.1 - SLIM_TAB_H - SLIM_PAD >= ft.1 - TAB_H - PAD - 1.0 && NotchStyle::from_key("slim") == Some(NotchStyle::Slim);
+                out += &format!(
+                    "{:<4} Slim style: closed {:.0}x{:.0} (Full {:.0}x{:.0}), open {:.0}x{:.0} (Full {:.0}x{:.0}), Tools keeps its height\n",
+                    if ok { "OK" } else { "FAIL" }, sc.0, sc.1, fc.0, fc.1, so.0, so.1, fo.0, fo.1
+                );
+                (a.expanded, a.settings_open, a.tab, a.settings.edge) = saved;
+                // With the widest clock (12:58), what each live view shows
+                // still fits beside it: ring + label, icon + text, countdown.
+                let mid = a.gfx.measure("12:58", 14.0, Weight::Semi) + 2.0;
+                let wing = SLIM_LIVE_W / 2.0 - mid / 2.0 - SLIM_GAP - SLIM_WING_PAD;
+                let mut tight = Vec::new();
+                for (box_w, gap, label) in [(18.0, 5.0, "Timer"), (18.0, 5.0, "Watch"), (18.0, 5.0, "Focus"), (18.0, 5.0, "Break"), (20.0, 4.0, "Due"), (20.0, 4.0, "OK?"), (20.0, 2.0, "100%"), (0.0, 0.0, "Maghrib")] {
+                    if box_w + gap + a.gfx.measure(label, 12.0, Weight::Semi) > wing {
+                        tight.push(label);
+                    }
+                }
+                for d in ["59:59", "1:00:00"] {
+                    if a.gfx.measure_digits(d, 12.0) > wing {
+                        tight.push(d);
+                    }
+                }
+                out += &format!("{:<4} Slim live notch: {SLIM_LIVE_W} wide, wings {wing:.0} px beside a 12:58 clock, labels fit {tight:?}\n", if tight.is_empty() { "OK" } else { "FAIL" });
+            }
             a.settings.style = before.0;
             a.settings.mascot = before.1;
             a.settings.personality = before.2;
@@ -5191,7 +5305,9 @@ pub fn render_docs(dir: &std::path::Path) -> String {
         let scale = 2.0;
         a.scale = scale;
         let _ = a.gfx.resize((CANVAS_W * scale) as i32, (CANVAS_H * scale) as i32);
-        a.settings.style = NotchStyle::Full;
+        // WINDYLAND_RENDER_STYLE=slim renders every shot in another style (for checking layouts).
+        let base = std::env::var("WINDYLAND_RENDER_STYLE").ok().and_then(|s| NotchStyle::from_key(&s)).unwrap_or(NotchStyle::Full);
+        a.settings.style = base;
         a.settings.edge = Edge::Top;
         a.settings.personality = true;
         a.anchor = CANVAS_W / 2.0;
@@ -5211,7 +5327,7 @@ pub fn render_docs(dir: &std::path::Path) -> String {
 
         // Collapsed looks.
         shot(a, dir, "collapsed_full_music");
-        for (s, n) in [(NotchStyle::Compact, "collapsed_compact_music"), (NotchStyle::Pill, "collapsed_pill_music")] {
+        for (s, n) in [(NotchStyle::Slim, "collapsed_slim_music"), (NotchStyle::Compact, "collapsed_compact_music"), (NotchStyle::Pill, "collapsed_pill_music")] {
             a.settings.style = s;
             shot(a, dir, n);
         }
@@ -5220,7 +5336,7 @@ pub fn render_docs(dir: &std::path::Path) -> String {
         shot(a, dir, "collapsed_pill_idle");
         a.settings.style = NotchStyle::Compact;
         shot(a, dir, "collapsed_compact_clock");
-        a.settings.style = NotchStyle::Full;
+        a.settings.style = base;
         shot(a, dir, "collapsed_full_clock");
         for (m, n) in [(Mood::Eyes, "mascot_eyes"), (Mood::Doze, "mascot_doze"), (Mood::Wave, "mascot_wave")] {
             a.mood = m;
@@ -5259,7 +5375,7 @@ pub fn render_docs(dir: &std::path::Path) -> String {
         shot(a, dir, "collapsed_full_timer");
         a.settings.style = NotchStyle::Pill;
         shot(a, dir, "collapsed_pill_timer");
-        a.settings.style = NotchStyle::Full;
+        a.settings.style = base;
         a.expanded = true;
         act(a, timer, crate::modules::timer::A_DEMO_WATCH);
         shot(a, dir, "panel_stopwatch");
@@ -5329,6 +5445,33 @@ pub fn render_docs(dir: &std::path::Path) -> String {
             a.tab = m;
             shot(a, dir, "panel_monitor");
         }
+        // Every live activity on the closed notch, one at a time (the other
+        // panels hidden), then music with a mascot beside and between.
+        {
+            let saved = (a.settings.hidden_panels.clone(), a.mood, a.settings.mascot_pos);
+            a.expanded = false;
+            if let Some(m) = find(a, "System Monitor") {
+                a.call(m, |x, c| x.action(1, (0.0, 0.0), c)); // Show on closed notch
+            }
+            let tabs: Vec<usize> = (0..a.modules.len()).filter(|&j| a.modules[j].has_tab()).collect();
+            for &i in &tabs {
+                a.settings.hidden_panels = tabs.iter().filter(|&&j| j != i).map(|&j| a.modules[j].title().to_string()).collect();
+                if a.live_module() == Some(i) {
+                    shot(a, dir, &format!("live_{}", a.modules[i].title().replace(' ', "_").to_lowercase()));
+                }
+            }
+            a.settings.hidden_panels = tabs.iter().filter(|&&j| j != music).map(|&j| a.modules[j].title().to_string()).collect();
+            a.mood = Mood::Eyes;
+            for (pos, n) in [(0u8, "live_music_mascot_left"), (1, "live_music_mascot_center")] {
+                a.settings.mascot_pos = pos;
+                shot(a, dir, n);
+            }
+            if let Some(m) = find(a, "System Monitor") {
+                a.call(m, |x, c| x.action(1, (0.0, 0.0), c));
+            }
+            (a.settings.hidden_panels, a.mood, a.settings.mascot_pos) = saved;
+            a.expanded = true;
+        }
         a.open_settings();
         a.settings_page = 0;
         shot(a, dir, "settings_general");
@@ -5385,7 +5528,7 @@ pub fn render_docs(dir: &std::path::Path) -> String {
             shot(a, dir, n);
         }
         a.settings.edge = Edge::Left;
-        a.settings.style = NotchStyle::Full;
+        a.settings.style = base;
         a.anchor = CANVAS_H / 2.0;
         a.expanded = true;
         a.tab = music;
@@ -5810,9 +5953,10 @@ fn draw_mascot(ui: &mut Ui, area: Rect, kind: Mascot, mood: Mood, t: f64, origin
 fn settings_tip(id: u32) -> &'static str {
     match id {
         S_STYLE => "Clock, music and mascot in a notch",
-        11 => "A smaller notch",
-        12 => "Just a thin bar until you hover",
-        13 => "Invisible until you hover the edge",
+        11 => "Like Full, but narrower; the open panel is smaller too",
+        12 => "A smaller notch",
+        13 => "Just a thin bar until you hover",
+        14 => "Invisible until you hover the edge",
         i if (S_EDGE..S_EDGE + 4).contains(&i) => "Put the notch on this screen edge",
         S_CENTER => "Move it back to the middle of the edge",
         S_MASCOT => "Show the clock instead of a mascot",
@@ -5856,7 +6000,7 @@ fn onboard_tip(id: u32) -> &'static str {
         O_BACK => "Previous step",
         O_SKIP => "Skip the tour (Welcome tour in the tray menu brings it back)",
         O_SETTINGS => "Finish and open Settings",
-        i if (O_STYLE..O_STYLE + 4).contains(&i) => "Use this look for the closed notch",
+        i if (O_STYLE..O_STYLE + 5).contains(&i) => "Use this look for the closed notch",
         i if (O_EDGE..O_EDGE + 4).contains(&i) => "Put the notch on this screen edge",
         _ => "",
     }

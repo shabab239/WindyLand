@@ -189,6 +189,11 @@ pub trait Module {
     fn size(&self) -> (f32, f32) {
         (440.0, 150.0)
     }
+    /// Smallest panel content this view needs in the Slim style, which
+    /// otherwise trims the panel. Views too dense to shrink return PANEL.
+    fn slim_min(&self) -> (f32, f32) {
+        (0.0, 0.0)
+    }
     /// Colour of this tab's highlight glow when you switch to it.
     fn accent(&self) -> Color {
         crate::gfx::col::ACCENT
@@ -234,7 +239,9 @@ pub trait Module {
         crate::gfx::col::ACCENT
     }
     /// Draw the live activity into the two wings of the collapsed notch.
-    /// Wings are about 28 px tall in Full style and 18 px in Compact.
+    /// Wings are about 28 px tall in Full style and 18 px in Compact; in
+    /// Slim they are only about 64 px wide (the clock sits between them),
+    /// so measure and shorten or drop a label rather than overflow.
     fn draw_live(&mut self, ui: &mut Ui, left: Rect, right: Rect) {}
     /// True while the module needs continuous frames (animations).
     fn animating(&self) -> bool {

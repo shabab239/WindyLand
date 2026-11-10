@@ -63,11 +63,12 @@ Open **Settings** and pick one under **Notch style**:
 | Style | Looks like | Best for |
 |---|---|---|
 | Full | Black notch with the clock, music and timers | Seeing everything at a glance |
+| Slim | Full, but narrower (120 at rest, 200 while music or a timer runs), and the open panel is a little smaller | Full's look in less space |
 | Compact | A smaller notch | Less space, still glanceable |
 | Pill | A thin bar, tinted while music or a timer runs | Almost invisible |
 | Hidden | Nothing | Rest the mouse at the edge to open |
 
-**Maximized windows:** with a maximized window under it (Chrome, Edge, VS Code...), the Full and Compact notch slims down to a thin bar, and clicks go straight through it, so the browser tabs under the notch stay clickable. Rest the mouse on the bar for a moment to open the notch. Alerts still drop down as usual. Turn this off with **Slim down over maximized apps** in Settings > General.
+**Maximized windows:** with a maximized window under it (Chrome, Edge, VS Code...), the Full, Slim and Compact notch slims down to a thin bar, and clicks go straight through it, so the browser tabs under the notch stay clickable. Rest the mouse on the bar for a moment to open the notch. Alerts still drop down as usual. Turn this off with **Slim down over maximized apps** in Settings > General.
 
 ## Now playing and lyrics
 
@@ -77,7 +78,7 @@ Open **Settings** and pick one under **Notch style**:
 - **Click the progress bar** to seek. Use the previous, play/pause and next buttons.
 - If a player turns down a skip (some web players), WindyLand presses the media key for you instead. The previous and next buttons look dimmed when the player says it can't skip right now (a single video, the first track). Most players restart the song when you press previous a few seconds in; press it twice to go back a track.
 - **Lyrics**: click the lines button on the right. The panel splits and the current line lights up. Click a line to jump to it, or scroll to look ahead.
-- When music plays, the closed notch shows the album art and a small equaliser.
+- When music plays, the closed notch shows the album art on the left, a small equaliser on the right and the clock in the middle (on the top and bottom edges, unless a centred mascot sits there). Timers, Pomodoro, prayer times, due tasks, AI agents and the system monitor keep the clock in the middle the same way.
 - Some songs have no lyrics on LRCLIB yet; the panel then says *Lyrics not available*.
 
 ## Timer and stopwatch

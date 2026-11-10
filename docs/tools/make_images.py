@@ -216,7 +216,7 @@ def ease(p):
 STEPS = {
     "intro": ("", "WindyLand"),
     "tour": ("01 · WELCOME TOUR", "Learn it in a minute"),
-    "styles": ("02 · NOTCH STYLES", "Four looks, one notch"),
+    "styles": ("02 · NOTCH STYLES", "Five looks, one notch"),
     "open": ("03 · HOVER TO OPEN", "Your music, right there"),
     "tabs": ("04 · CLICK OR SCROLL", "Everything in one place"),
     "alerts": ("05 · ALERTS", "Alerts that feel native"),

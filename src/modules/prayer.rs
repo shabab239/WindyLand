@@ -670,8 +670,17 @@ impl Module for Prayer {
 
     fn draw_live(&mut self, ui: &mut Ui, left: Rect, right: Rect) {
         let (_, next, mins) = self.status();
-        ui.icon(MOON, Rect::new(left.x, left.y, left.h, left.h), 13.0, ACCENT);
-        let name = Rect::new(left.x + left.h + 2.0, left.y, (left.w - left.h - 2.0).max(0.0), left.h);
+        // Narrow wings (Slim): a tighter moon, and no moon if the name
+        // would not fit beside it.
+        let iw = if left.w < 80.0 { left.h.min(20.0) } else { left.h };
+        let nw = ui.measure(NAMES[next], 12.0, Weight::Semi);
+        let x = if iw + 2.0 + nw <= left.w {
+            ui.icon(MOON, Rect::new(left.x, left.y, iw, left.h), 13.0, ACCENT);
+            left.x + iw + 2.0
+        } else {
+            left.x
+        };
+        let name = Rect::new(x, left.y, (left.r() - x).max(0.0), left.h);
         ui.text(NAMES[next], name, 12.0, col::TEXT, Weight::Semi, Align::Left);
         let secs = (mins * 60.0).max(0.0) as i64;
         ui.digits(&format!("{}:{:02}", secs / 60, secs % 60), right, 13.0, ACCENT, Align::Right);
