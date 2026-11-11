@@ -21,7 +21,7 @@ use windows::Win32::System::DataExchange::COPYDATASTRUCT;
 use windows::Win32::UI::WindowsAndMessaging::*;
 
 use crate::gfx::*;
-use crate::modules::{Ctx, Module, Rel, Toast};
+use crate::modules::{Ctx, Module, Rel, Toast, side_rects};
 use crate::time::{fmt_dur, unix_now};
 use crate::ui::Ui;
 
@@ -966,6 +966,27 @@ impl Module for Agents {
 
     fn live_color(&self) -> Color {
         self.top(unix_now()).map_or(ACCENT, |s| if s.state == State::Working { ACCENT } else { state_color(s.state) })
+    }
+
+    fn live_id(&self) -> &'static str {
+        "agents"
+    }
+
+    fn draw_live_side(&mut self, ui: &mut Ui, r: Rect, right: bool) {
+        // Icon and how long it has worked (or its state).
+        let now = unix_now();
+        let Some(s) = self.top(now).cloned() else { return };
+        let c = if s.state == State::Working { ACCENT } else { state_color(s.state) };
+        let text = match s.state {
+            State::Working => fmt_dur(now - s.started),
+            State::NeedsYou => "OK?".to_string(),
+            other => state_label(other).to_string(),
+        };
+        let size = 12.0;
+        let tw = ui.measure(&text, size, Weight::Semi);
+        let (ic, tr) = side_rects(r, right, r.h.min(18.0), tw, 4.0);
+        ui.icon(ICON, ic, 12.0, c);
+        ui.text(&text, tr, size, c, Weight::Semi, Align::Left);
     }
 
     fn draw_live(&mut self, ui: &mut Ui, left: Rect, right: Rect) {

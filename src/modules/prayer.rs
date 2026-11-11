@@ -15,7 +15,7 @@
 use std::collections::BTreeMap;
 
 use crate::gfx::*;
-use crate::modules::{Ctx, Module, Rel, Toast};
+use crate::modules::{Ctx, Module, Rel, Toast, side_rects, Widget};
 use crate::store;
 use crate::time::{unix_now, Now};
 use crate::ui::Ui;
@@ -239,6 +239,16 @@ pub struct Prayer {
     fired: Vec<(String, String)>,
     /// Today's times (cached per day + settings).
     cache: Option<(String, [f64; 6])>,
+    /// "Use it for prayer times too" (Widgets > Place): that place instead
+    /// of the city above, without changing what's saved.
+    ovr: Option<(f64, f64, String)>,
+}
+
+/// The prayer-times place: latitude, longitude and its name (the Weather
+/// widget uses it too).
+pub fn location() -> (f64, f64, String) {
+    let p = Prayer::load();
+    (p.lat, p.lon, p.place())
 }
 
 impl Prayer {
@@ -265,6 +275,7 @@ impl Prayer {
             editing: None,
             fired: Vec::new(),
             cache: None,
+            ovr: None,
         };
         for (i, n) in NAMES.iter().enumerate() {
             let k = n.to_lowercase();
@@ -302,10 +313,14 @@ impl Prayer {
 
     pub fn calc(&self) -> Calc {
         let (_, _, fajr, isha) = METHODS[self.method];
-        Calc { lat: self.lat, lon: self.lon, tz: local_tz(), fajr, isha, asr: if self.hanafi { 2.0 } else { 1.0 } }
+        let (lat, lon) = self.ovr.as_ref().map_or((self.lat, self.lon), |o| (o.0, o.1));
+        Calc { lat, lon, tz: local_tz(), fajr, isha, asr: if self.hanafi { 2.0 } else { 1.0 } }
     }
 
     fn place(&self) -> String {
+        if let Some(o) = &self.ovr {
+            return o.2.clone();
+        }
         match self.city {
             Some(i) => CITIES[i].0.to_string(),
             None => format!("{:.2}, {:.2}", self.lat, self.lon),
@@ -502,6 +517,11 @@ impl Module for Prayer {
     }
 
     fn tick(&mut self, ctx: &mut Ctx) {
+        let want = if ctx.settings.place.prayer { crate::modules::widgets::PLACE.lock().unwrap().clone() } else { None };
+        if want != self.ovr {
+            self.ovr = want;
+            self.cache = None;
+        }
         let t = self.today();
         let now = Now::get();
         let day = now.day_key();
@@ -558,8 +578,16 @@ impl Module for Prayer {
                 let now = Now::get();
                 let m = now.hour as f64 * 60.0 + now.min as f64 + now.sec as f64 / 60.0;
                 let target = if id == A_TEST_DUE { m - 0.7 } else { m + 10.0 };
-                self.offsets[2] = (target - t[2] * 60.0).round() as i32;
-                self.bells = [false, false, true, false, false, false];
+                // Move the prayer that comes next (any time of day; before
+                // sunrise, sunrise moves out of the way and Dhuhr is used).
+                let mut k = (0..6).find(|&i| t[i] * 60.0 > m + 11.0).unwrap_or(2);
+                if k == 1 {
+                    self.offsets[1] = (m - 1.5 - t[1] * 60.0).round() as i32;
+                    k = 2;
+                }
+                self.offsets[k] = (target - t[k] * 60.0).round() as i32;
+                self.bells = [false; 6];
+                self.bells[k] = true;
                 self.live_on = true;
                 self.fired.clear();
                 self.cache = None;
@@ -659,13 +687,34 @@ impl Module for Prayer {
         if !self.live_on {
             return None;
         }
-        let mut me = Prayer { cache: self.cache.clone(), fired: Vec::new(), editing: None, page: Page::Main, ..*self };
+        let mut me = Prayer { cache: self.cache.clone(), ovr: self.ovr.clone(), fired: Vec::new(), editing: None, page: Page::Main, ..*self };
         let (_, next, left) = me.status();
         (next != 1 && left <= 15.0).then_some(55)
     }
 
     fn live_color(&self) -> Color {
         ACCENT
+    }
+
+    fn live_id(&self) -> &'static str {
+        "prayer"
+    }
+
+    fn widgets(&mut self) -> Vec<Widget> {
+        let (_, next, _) = self.status();
+        let t = self.today();
+        vec![Widget::new("next_prayer", "Next prayer", MOON, ACCENT, hhmm(t[next])).label(NAMES[next]).detail(format!("{} at {}", NAMES[next], hhmm(t[next])))]
+    }
+
+    fn draw_live_side(&mut self, ui: &mut Ui, r: Rect, right: bool) {
+        // Moon and the countdown.
+        let (_, _, mins) = self.status();
+        let secs = (mins * 60.0).max(0.0) as i64;
+        let text = format!("{}:{:02}", secs / 60, secs % 60);
+        let tw = ui.measure_digits(&text, 13.0);
+        let (ic, tr) = side_rects(r, right, r.h.min(18.0), tw, 4.0);
+        ui.icon(MOON, ic, 12.0, ACCENT);
+        ui.digits(&text, tr, 13.0, ACCENT, Align::Left);
     }
 
     fn draw_live(&mut self, ui: &mut Ui, left: Rect, right: Rect) {
@@ -692,7 +741,7 @@ impl Module for Prayer {
     }
 
     fn debug_state(&self) -> String {
-        let mut me = Prayer { cache: self.cache.clone(), fired: Vec::new(), editing: None, page: Page::Main, ..*self };
+        let mut me = Prayer { cache: self.cache.clone(), ovr: self.ovr.clone(), fired: Vec::new(), editing: None, page: Page::Main, ..*self };
         let t = me.today();
         format!("{} ({:.4}, {:.4}) {} {} tz {:+} : {}", me.place(), self.lat, self.lon, METHODS[self.method].1, if self.hanafi { "Hanafi" } else { "Shafi" }, local_tz(), t.iter().map(|h| hhmm24(*h)).collect::<Vec<_>>().join(" "))
     }

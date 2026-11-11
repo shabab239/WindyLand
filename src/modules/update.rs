@@ -268,10 +268,7 @@ impl Updater {
     }
 
     fn open_page(&self) {
-        let url = HSTRING::from(format!("https://github.com/{REPO}/releases/latest"));
-        unsafe {
-            ShellExecuteW(None, w!("open"), &url, None, None, SW_SHOWNORMAL);
-        }
+        crate::app::open_later(format!("https://github.com/{REPO}/releases/latest"));
     }
 }
 

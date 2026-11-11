@@ -3,7 +3,7 @@
 //! pops a toast (Restart / Dismiss).
 
 use crate::gfx::*;
-use crate::modules::{Ctx, Module, Rel, Toast};
+use crate::modules::{Ctx, Module, Rel, Toast, side_rects};
 use crate::time::{fmt_mod, unix_now, Now};
 use crate::ui::Ui;
 
@@ -379,6 +379,25 @@ impl Module for Timer {
         } else {
             C_WATCH
         }
+    }
+
+    fn live_id(&self) -> &'static str {
+        "timer"
+    }
+
+    fn draw_live_side(&mut self, ui: &mut Ui, r: Rect, right: bool) {
+        // Ring (or the stopwatch icon) and the time.
+        let (c, text, frac) = self.live_text();
+        let size = if r.h < 22.0 { 12.0 } else { 13.0 };
+        let tw = ui.measure_digits(&text, size);
+        let (ic, tr) = side_rects(r, right, r.h.min(18.0), tw, 5.0);
+        if frac >= 0.0 {
+            ui.stroke_circle(ic.cx(), ic.cy(), 6.5, c.with_a(0.25), 2.0);
+            ui.arc(ic.cx(), ic.cy(), 6.5, 0.0, std::f32::consts::TAU * frac, c, 2.0);
+        } else {
+            ui.icon(glyph::TIMER, ic, 12.0, c);
+        }
+        ui.digits(&text, tr, size, col::TEXT, Align::Left);
     }
 
     fn draw_live(&mut self, ui: &mut Ui, left: Rect, right: Rect) {

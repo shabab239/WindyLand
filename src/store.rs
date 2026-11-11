@@ -316,11 +316,334 @@ pub struct Settings {
     /// Shrink to a thin, click-through bar while a maximized window is
     /// under the notch (browser tabs stay clickable).
     pub make_room: bool,
+    /// What the closed notch shows, in order (Widgets tab).
+    pub layout: NotchLayout,
+    pub place: Place,
     pub extra: BTreeMap<String, String>,
+}
+
+/// One row of the closed notch's priority list: one item across both
+/// sides of the clock (`wide`), or up to two one-side items. Ids come from
+/// `Module::live_id` (music, timer...) and `Module::widgets` (battery...);
+/// an empty string is an empty side.
+#[derive(Clone, Debug, PartialEq, Default)]
+pub struct NotchRow {
+    pub wide: bool,
+    pub left: String,
+    pub right: String,
+}
+
+impl NotchRow {
+    pub fn wide(id: &str) -> NotchRow {
+        NotchRow { wide: true, left: id.into(), right: String::new() }
+    }
+    pub fn pair(l: &str, r: &str) -> NotchRow {
+        NotchRow { wide: false, left: l.into(), right: r.into() }
+    }
+    pub fn ids(&self) -> impl Iterator<Item = &String> {
+        [&self.left, &self.right].into_iter().filter(|s| !s.is_empty())
+    }
+    pub fn is_empty(&self) -> bool {
+        self.left.is_empty() && self.right.is_empty()
+    }
+}
+
+/// When a widget shows on the closed notch.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ShowWhen {
+    Always,
+    /// Only while it has something worth showing (battery off the charger).
+    Matters,
+    /// For a few seconds after its value changes.
+    Change,
+}
+
+impl ShowWhen {
+    pub fn key(self) -> &'static str {
+        match self {
+            ShowWhen::Always => "a",
+            ShowWhen::Matters => "m",
+            ShowWhen::Change => "c",
+        }
+    }
+    pub fn from_key(s: &str) -> Option<ShowWhen> {
+        [ShowWhen::Always, ShowWhen::Matters, ShowWhen::Change].into_iter().find(|w| w.key() == s)
+    }
+    pub fn next(self) -> ShowWhen {
+        match self {
+            ShowWhen::Always => ShowWhen::Matters,
+            ShowWhen::Matters => ShowWhen::Change,
+            ShowWhen::Change => ShowWhen::Always,
+        }
+    }
+}
+
+/// How an alert (volume, Caps Lock, copied...) appears.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AlertMode {
+    Off,
+    /// A few seconds inside the closed notch, nothing opens.
+    Small,
+    /// The card that drops out of the notch.
+    Popup,
+}
+
+impl AlertMode {
+    pub const ALL: [AlertMode; 3] = [AlertMode::Off, AlertMode::Small, AlertMode::Popup];
+    pub fn key(self) -> &'static str {
+        match self {
+            AlertMode::Off => "o",
+            AlertMode::Small => "s",
+            AlertMode::Popup => "p",
+        }
+    }
+    pub fn from_key(s: &str) -> Option<AlertMode> {
+        AlertMode::ALL.into_iter().find(|w| w.key() == s)
+    }
+}
+
+/// The alerts that have a mode: (toast key, name).
+pub const ALERTS: [(&str, &str); 8] = [
+    ("volume", "Volume"),
+    ("copy", "Copied"),
+    ("power", "Battery"),
+    ("net", "Network"),
+    ("caps", "Caps Lock"),
+    ("lang", "Language"),
+    ("bt", "Bluetooth"),
+    ("privacy", "Mic & camera"),
+];
+
+/// What the closed notch shows. Simple: `picked` is what is switched on and
+/// WindyLand orders it. Custom (`custom`): `rows` is the order, top first;
+/// the first row with something to show wins, and a one-side row with an
+/// empty (or idle) side borrows the next one-side item below.
+#[derive(Clone, Debug, PartialEq)]
+pub struct NotchLayout {
+    pub rows: Vec<NotchRow>,
+    /// The rule for widgets without one of their own: Matters, else Always.
+    pub smart: bool,
+    pub custom: bool,
+    /// Everything switched on, in the order it was switched on.
+    pub picked: Vec<String>,
+    pub when: BTreeMap<String, ShowWhen>,
+    pub alerts: BTreeMap<String, AlertMode>,
+}
+
+const DEFAULT_PICKED: [&str; 8] = ["pomodoro", "timer", "prayer", "music", "agents", "due", "battery", "bluetooth"];
+
+impl Default for NotchLayout {
+    /// Today's order: timers above prayer above music above agents above
+    /// due tasks, then the battery and a Bluetooth device's battery.
+    fn default() -> NotchLayout {
+        let mut rows: Vec<NotchRow> = DEFAULT_PICKED[..6].iter().map(|id| NotchRow::wide(id)).collect();
+        rows.push(NotchRow::pair("battery", "bluetooth"));
+        NotchLayout { rows, smart: true, custom: false, picked: DEFAULT_PICKED.iter().map(|s| s.to_string()).collect(), when: BTreeMap::new(), alerts: BTreeMap::new() }
+    }
+}
+
+impl NotchLayout {
+    /// For tests and renders: exactly these rows, as a custom order.
+    pub fn custom_rows(rows: Vec<NotchRow>, smart: bool) -> NotchLayout {
+        let picked = rows.iter().flat_map(|r| r.ids().cloned().collect::<Vec<_>>()).collect();
+        NotchLayout { rows, smart, custom: true, picked, when: BTreeMap::new(), alerts: BTreeMap::new() }
+    }
+
+    /// Switched on.
+    pub fn contains(&self, id: &str) -> bool {
+        self.picked.iter().any(|x| x == id)
+    }
+
+    pub fn when_of(&self, id: &str) -> ShowWhen {
+        self.when.get(id).copied().unwrap_or(if self.smart { ShowWhen::Matters } else { ShowWhen::Always })
+    }
+
+    /// Switch an item off (its row goes when it empties).
+    pub fn remove(&mut self, id: &str) {
+        self.picked.retain(|x| x != id);
+        for r in &mut self.rows {
+            if r.left == id {
+                r.left.clear();
+            }
+            if r.right == id {
+                r.right.clear();
+            }
+        }
+        self.rows.retain(|r| !r.is_empty());
+    }
+
+    /// Switch an item on: last, as a one-side item (beside the last one
+    /// when that row has room).
+    pub fn add(&mut self, id: &str) {
+        if !self.contains(id) {
+            self.picked.push(id.into());
+        }
+        if self.rows.iter().any(|r| r.ids().any(|x| x == id)) {
+            return;
+        }
+        match self.rows.last_mut() {
+            Some(r) if !r.wide && r.right.is_empty() && !r.left.is_empty() => r.right = id.into(),
+            _ => self.rows.push(NotchRow::pair(id, "")),
+        }
+    }
+
+    /// After the rows were edited (drag, remove): `picked` follows them.
+    pub fn sync_picked(&mut self) {
+        let in_rows: Vec<String> = self.rows.iter().flat_map(|r| r.ids().cloned().collect::<Vec<_>>()).collect();
+        self.picked.retain(|p| in_rows.contains(p));
+        for id in in_rows {
+            if !self.picked.contains(&id) {
+                self.picked.push(id);
+            }
+        }
+    }
+
+    /// `*music;battery,bluetooth;cpu,` (wide rows start with *).
+    pub fn to_text(&self) -> String {
+        self.rows
+            .iter()
+            .map(|r| if r.wide { format!("*{}", r.left) } else { format!("{},{}", r.left, r.right) })
+            .collect::<Vec<_>>()
+            .join(";")
+    }
+
+    pub fn from_text(s: &str) -> Vec<NotchRow> {
+        let clean = |x: &str| x.trim().chars().filter(|c| c.is_ascii_alphanumeric() || *c == '_').collect::<String>();
+        s.split(';')
+            .filter_map(|part| {
+                let row = match part.trim().strip_prefix('*') {
+                    Some(id) => NotchRow::wide(&clean(id)),
+                    None => {
+                        let (l, r) = part.split_once(',').unwrap_or((part, ""));
+                        NotchRow::pair(&clean(l), &clean(r))
+                    }
+                };
+                (!row.is_empty()).then_some(row)
+            })
+            .collect()
+    }
+
+    fn load(kv: &BTreeMap<String, String>) -> NotchLayout {
+        let mut l = NotchLayout::default();
+        l.smart = kv.get("widgets_smart").map_or(true, |v| v == "1");
+        if let Some(t) = kv.get("notch_layout") {
+            let rows = NotchLayout::from_text(t);
+            // Saved by a build without the simple mode: an edited order
+            // stays a custom order.
+            l.custom = kv.get("notch_custom").map_or(rows != l.rows, |v| v == "1");
+            l.rows = rows;
+            l.picked = match kv.get("notch_picked") {
+                Some(p) => p.split(',').filter(|s| !s.is_empty()).map(String::from).collect(),
+                None => l.rows.iter().flat_map(|r| r.ids().cloned().collect::<Vec<_>>()).collect(),
+            };
+        } else if kv.get("monitor_live").map_or(false, |v| v == "1") {
+            // The monitor's old "Show on closed notch" switch.
+            l.add("cpu");
+            l.add("net");
+        }
+        let pairs = |k: &str| -> Vec<(String, String)> {
+            kv.get(k).map_or(Vec::new(), |v| v.split(',').filter_map(|p| p.split_once(':')).map(|(a, b)| (a.to_string(), b.to_string())).collect())
+        };
+        l.when = pairs("notch_when").into_iter().filter_map(|(a, b)| Some((a, ShowWhen::from_key(&b)?))).collect();
+        l.alerts = pairs("notch_alerts").into_iter().filter_map(|(a, b)| Some((a, AlertMode::from_key(&b)?))).collect();
+        l
+    }
+
+    fn save(&self, kv: &mut BTreeMap<String, String>) {
+        kv.insert("notch_layout".into(), self.to_text());
+        kv.insert("notch_custom".into(), (self.custom as u8).to_string());
+        kv.insert("notch_picked".into(), self.picked.join(","));
+        kv.insert("widgets_smart".into(), (self.smart as u8).to_string());
+        kv.insert("notch_when".into(), self.when.iter().map(|(a, b)| format!("{a}:{}", b.key())).collect::<Vec<_>>().join(","));
+        kv.insert("notch_alerts".into(), self.alerts.iter().map(|(a, b)| format!("{a}:{}", b.key())).collect::<Vec<_>>().join(","));
+        kv.remove("monitor_live");
+    }
+}
+
+/// Where you are, for the weather (and prayer times, if you choose).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PlaceMode {
+    /// The main city of Windows' time zone (offline, no permission).
+    Auto,
+    /// Windows' location service.
+    Windows,
+    /// A city you picked.
+    Manual,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct Place {
+    pub mode: PlaceMode,
+    /// Manual: the city. Windows: the last position it gave.
+    pub lat: f64,
+    pub lon: f64,
+    pub name: String,
+    /// Prayer times use this place instead of their own city.
+    pub prayer: bool,
+    /// Weather in °F (default °C).
+    pub fahrenheit: bool,
+}
+
+impl Place {
+    fn load(kv: &BTreeMap<String, String>) -> Place {
+        let f = |k: &str| kv.get(k).and_then(|v| v.parse::<f64>().ok()).unwrap_or(0.0);
+        Place {
+            mode: match kv.get("place_mode").map(String::as_str) {
+                Some("windows") => PlaceMode::Windows,
+                Some("manual") => PlaceMode::Manual,
+                _ => PlaceMode::Auto,
+            },
+            lat: f("place_lat").clamp(-90.0, 90.0),
+            lon: f("place_lon").clamp(-180.0, 180.0),
+            name: kv.get("place_name").cloned().unwrap_or_default(),
+            prayer: kv.get("place_prayer").map_or(false, |v| v == "1"),
+            fahrenheit: kv.get("weather_f").map_or(false, |v| v == "1"),
+        }
+    }
+
+    fn save(&self, kv: &mut BTreeMap<String, String>) {
+        let mode = match self.mode {
+            PlaceMode::Auto => "auto",
+            PlaceMode::Windows => "windows",
+            PlaceMode::Manual => "manual",
+        };
+        kv.insert("place_mode".into(), mode.into());
+        kv.insert("place_lat".into(), format!("{:.4}", self.lat));
+        kv.insert("place_lon".into(), format!("{:.4}", self.lon));
+        kv.insert("place_name".into(), self.name.replace(['\n', '\r'], " "));
+        kv.insert("place_prayer".into(), (self.prayer as u8).to_string());
+        kv.insert("weather_f".into(), (self.fahrenheit as u8).to_string());
+    }
 }
 
 impl Settings {
     /// The panel with this title was turned off in Settings > Panels.
+    /// How an alert shows. Volume and Copied also have their own switch
+    /// (Settings): off there is Off here.
+    pub fn alert_mode(&self, key: &str) -> AlertMode {
+        let m = self.layout.alerts.get(key).copied().unwrap_or(AlertMode::Popup);
+        let switch = match key {
+            "volume" => Some(self.volume_overlay),
+            "copy" => Some(self.copy_toast),
+            _ => None,
+        };
+        match switch {
+            Some(false) => AlertMode::Off,
+            // Switched back on in Settings: a pop-up again.
+            Some(true) if m == AlertMode::Off => AlertMode::Popup,
+            _ => m,
+        }
+    }
+
+    pub fn set_alert_mode(&mut self, key: &str, mode: AlertMode) {
+        match key {
+            "volume" => self.volume_overlay = mode != AlertMode::Off,
+            "copy" => self.copy_toast = mode != AlertMode::Off,
+            _ => {}
+        }
+        self.layout.alerts.insert(key.to_string(), mode);
+    }
+
     pub fn panel_hidden(&self, title: &str) -> bool {
         self.hidden_panels.iter().any(|t| t == title)
     }
@@ -360,6 +683,8 @@ impl Settings {
             clock12: kv.get("clock12").map_or(true, |v| v != "0"),
             copy_toast: kv.get("copy_toast").map_or(false, |v| v == "1"),
             make_room: kv.get("make_room").map_or(true, |v| v != "0"),
+            layout: NotchLayout::load(&kv),
+            place: Place::load(&kv),
             extra: kv,
         }
     }
@@ -393,6 +718,8 @@ impl Settings {
         kv.insert("clock12".into(), (self.clock12 as u8).to_string());
         kv.insert("copy_toast".into(), (self.copy_toast as u8).to_string());
         kv.insert("make_room".into(), (self.make_room as u8).to_string());
+        self.layout.save(&mut kv);
+        self.place.save(&mut kv);
         write("settings.txt", &write_kv(&kv));
     }
 }

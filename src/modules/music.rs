@@ -17,7 +17,7 @@ use windows::Win32::UI::WindowsAndMessaging::PostMessageW;
 use crate::app::WM_APP_WAKE;
 use crate::gfx::*;
 use crate::http;
-use crate::modules::{Ctx, Module, Rel};
+use crate::modules::{Ctx, Module, Rel, side_rects};
 use crate::time::{filetime_to_unix, fmt_dur, unix_now};
 use crate::ui::Ui;
 
@@ -810,6 +810,29 @@ impl Module for Music {
             let h = 3.0 + (ph.sin() * 0.5 + 0.5) as f32 * (right.h * 0.6).min(12.0);
             let x = x0 + i as f32 * (bw + gap);
             ui.fill_rr(Rect::new(x, right.cy() - h / 2.0, bw, h), 1.5, col::ACCENT);
+        }
+    }
+
+    fn live_id(&self) -> &'static str {
+        "music"
+    }
+
+    fn draw_live_side(&mut self, ui: &mut Ui, r: Rect, right: bool) {
+        // Art and a small equaliser (4 bars of 3 px, 3 px apart).
+        let s = r.h.min(22.0);
+        let (lead, eq) = side_rects(r, right, s, 21.0, 6.0);
+        let a = Rect::new(lead.x, lead.cy() - s / 2.0, s, s);
+        match self.art_bitmap(ui) {
+            Some(b) => ui.image_rr(&b, a, 6.0),
+            None => {
+                ui.fill_rr(a, 6.0, col::TEXT.with_a(0.1));
+                ui.icon(glyph::MUSIC, a, 11.0, col::DIM);
+            }
+        }
+        for i in 0..4 {
+            let ph = ui.t * (5.0 + i as f64 * 1.7) + i as f64 * 1.3;
+            let h = 3.0 + (ph.sin() * 0.5 + 0.5) as f32 * (r.h * 0.6).min(12.0);
+            ui.fill_rr(Rect::new(eq.x + i as f32 * 6.0, r.cy() - h / 2.0, 3.0, h), 1.5, col::ACCENT);
         }
     }
 

@@ -31,6 +31,7 @@ pub mod tools;
 pub mod todo;
 pub mod update;
 pub mod water;
+pub mod widgets;
 
 /// Every tab opens to this one panel size (content area, DIPs), so the tab
 /// bar and buttons stay put while switching. A module's `size()` is its
@@ -54,12 +55,88 @@ pub fn all(hwnd: HWND) -> Vec<Box<dyn Module>> {
         Box::new(tools::Tools::new(hwnd)),
         Box::new(agents::Agents::new()),
         Box::new(monitor::Monitor::new()),
+        Box::new(widgets::Widgets::new()),
         Box::new(system::System::new(hwnd)),
         Box::new(privacy::Privacy::new()),
         Box::new(notifs::Notifs::new(hwnd)),
         Box::new(update::Updater::new(hwnd)),
         // Box::new(example::Example::default()),
     ]
+}
+
+/// One widget value for the closed notch.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Widget {
+    /// Unique and stable (saved in settings), e.g. "battery".
+    pub id: &'static str,
+    /// Name in the Widgets tab, e.g. "Battery".
+    pub name: &'static str,
+    pub icon: &'static str,
+    pub color: Color,
+    /// Short value for the notch: "82%", "4:45", "3".
+    pub value: String,
+    /// An even shorter form for a tight side: "11" for "11 Nov".
+    pub short: String,
+    /// Word beside the icon when it spans both sides: "Charging".
+    pub label: String,
+    /// A progress ring (0..1) drawn instead of the icon.
+    pub ring: Option<f32>,
+    /// Longer line for the Widgets tab: "2 h 10 min left".
+    pub detail: String,
+    /// Nothing worth showing now ("When it matters" skips it).
+    pub quiet: bool,
+}
+
+impl Widget {
+    pub fn new(id: &'static str, name: &'static str, icon: &'static str, color: Color, value: impl Into<String>) -> Widget {
+        let value = value.into();
+        Widget { id, name, icon, color, label: name.to_string(), detail: value.clone(), short: value.clone(), value, ring: None, quiet: false }
+    }
+    pub fn label(mut self, s: impl Into<String>) -> Self {
+        self.label = s.into();
+        self
+    }
+    pub fn short(mut self, s: impl Into<String>) -> Self {
+        self.short = s.into();
+        self
+    }
+    pub fn ring(mut self, f: f32) -> Self {
+        self.ring = Some(f.clamp(0.0, 1.0));
+        self
+    }
+    pub fn detail(mut self, s: impl Into<String>) -> Self {
+        self.detail = s.into();
+        self
+    }
+    pub fn quiet(mut self, q: bool) -> Self {
+        self.quiet = q;
+        self
+    }
+}
+
+/// Something that can go in the closed notch's list: a live activity or a
+/// widget, as the Widgets tab lists it.
+#[derive(Clone, Debug, PartialEq)]
+pub struct CatalogItem {
+    pub id: String,
+    pub name: String,
+    pub icon: &'static str,
+    pub color: Color,
+    pub ring: Option<f32>,
+    /// "60%", "Shows while music plays".
+    pub detail: String,
+    pub live: bool,
+    /// 0 live activities, 1 system, 2 from your panels (Show page groups).
+    pub group: u8,
+}
+
+/// Lay out a lead (icon, ring, art) and a text on one side of the clock:
+/// the lead faces outward, the text toward the clock; on the right side
+/// both hug the right edge. Returns (lead rect, text rect).
+pub fn side_rects(r: Rect, right: bool, lead_w: f32, text_w: f32, gap: f32) -> (Rect, Rect) {
+    let tw = text_w.min((r.w - lead_w - gap).max(0.0));
+    let x0 = if right { r.r() - lead_w - gap - tw } else { r.x };
+    (Rect::new(x0, r.y, lead_w, r.h), Rect::new(x0 + lead_w + gap, r.y, tw + 1.0, r.h))
 }
 
 /// A short notification shown by expanding the notch for a few seconds.
@@ -243,6 +320,31 @@ pub trait Module {
     /// Slim they are only about 64 px wide (the clock sits between them),
     /// so measure and shorten or drop a label rather than overflow.
     fn draw_live(&mut self, ui: &mut Ui, left: Rect, right: Rect) {}
+    /// Id of this module's live activity in the closed notch's priority
+    /// list (Widgets tab), e.g. "music". Empty: no live activity.
+    fn live_id(&self) -> &'static str {
+        ""
+    }
+    /// Draw the live activity on one side of the clock only (`right`: the
+    /// right side, so align to its right edge). `r` is about 64 px wide in
+    /// Slim and 92 in Full.
+    fn draw_live_side(&mut self, ui: &mut Ui, r: Rect, right: bool) {}
+    /// Small values this module offers for the closed notch. Called about
+    /// three times a second while the notch is closed, so read what you
+    /// already have.
+    fn widgets(&mut self) -> Vec<Widget> {
+        Vec::new()
+    }
+    /// The Widgets tab gets everything that can go on the notch before it
+    /// draws.
+    fn set_widget_catalog(&mut self, items: Vec<CatalogItem>, settings: &crate::store::Settings, showing: Vec<String>) {}
+    /// A press on hit `id` started to move: true starts a drag inside the
+    /// panel (then `drag_to` while it moves and `drag_drop` on release).
+    fn drag_begin(&mut self, id: u32, x: f32, y: f32) -> bool {
+        false
+    }
+    fn drag_to(&mut self, x: f32, y: f32) {}
+    fn drag_drop(&mut self, x: f32, y: f32, ctx: &mut Ctx) {}
     /// True while the module needs continuous frames (animations).
     fn animating(&self) -> bool {
         false

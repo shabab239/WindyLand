@@ -15,9 +15,9 @@ use windows::Win32::UI::Shell::*;
 use windows::Win32::UI::WindowsAndMessaging::*;
 
 use crate::gfx::*;
-use crate::modules::{self, Ctx, Module, Toast};
+use crate::modules::{self, side_rects, CatalogItem, Ctx, Module, Toast, Widget};
 use crate::mascot::{self, Mood};
-use crate::store::{ClipMode, Edge, Mascot, NotchStyle, Settings, Sound};
+use crate::store::{AlertMode, ClipMode, Edge, Mascot, NotchLayout, NotchRow, NotchStyle, Settings, ShowWhen, Sound};
 use crate::time::Now;
 use crate::ui::{Hit, Ui};
 use crate::{dragdrop, sound, tray};
@@ -36,6 +36,8 @@ const PAD: f32 = 16.0;
 /// Slim style: a shorter tab bar, tighter padding, and the panel content
 /// this much narrower and shorter than Full's.
 const SLIM_TAB_H: f32 = 26.0;
+/// The tallest a tab's content may make the panel (fits the canvas).
+const TALL_PANEL: f32 = 250.0;
 const SLIM_PAD: f32 = 12.0;
 const SLIM_TRIM: (f32, f32) = (80.0, 24.0);
 /// Slim closed notch while something is live: its width (the same for
@@ -75,7 +77,7 @@ const TOUR_TIPS: [(&str, &str, &str); 3] = [
 /// Tour step 4: panels worth knowing about.
 const TOUR_PANELS: [(&str, &str, &str); 4] = [
     ("\u{E99A}", "AI agents", "Hermes, Claude Code, Codex: working, needs you, done."),
-    ("\u{E9D9}", "System monitor", "CPU, memory and network, also on the closed notch."),
+    ("\u{ECA5}", "Widgets", "Battery, AirPods, weather and more on the closed notch."),
     ("\u{E90F}", "Tools", "Color picker, calculator, QR codes and converters."),
     (glyph::PASTE, "Clipboard & Shelf", "Search, snippets, click to paste. Screenshots to the Shelf."),
 ];
@@ -239,10 +241,19 @@ pub struct App {
     wheel_acc: f32,
     wheel_t: f64,
     wheel_last: f64,
-    /// The tab bar's rect in the last drawn frame.
+    /// The tab bar's rect in the last drawn frame, and one tab's width.
     tab_bar: Rect,
+    tab_slot: f32,
     /// Where the closed notch drew the mascot last (for the self-test).
     mascot_rect: Option<Rect>,
+    /// What the closed notch shows now (from the Widgets tab's order).
+    notch_shown: Option<Shown>,
+    /// Each widget's last value and when it changed ("On change").
+    widget_seen: std::collections::HashMap<&'static str, (String, f64)>,
+    /// An alert set to Small: shown inside the closed notch until then.
+    small_alert: Option<(Widget, f64)>,
+    /// A drag inside a panel (Widgets tab order list): that module.
+    inner_drag: Option<usize>,
     /// Welcome tour step while it is showing (first run, or from the tray).
     onboarding: Option<u8>,
     /// Settings page: 0 General, 1 Privacy, 2 Panels.
@@ -316,6 +327,28 @@ pub fn shutdown() {
             std::mem::forget(g.take());
         }
     });
+}
+
+thread_local! {
+    static OPEN_LATER: RefCell<Vec<String>> = RefCell::new(Vec::new());
+}
+
+/// Open a file, folder or link once the current message is handled. The
+/// shell keeps Windows messages flowing while it starts things; inside a
+/// click WindyLand is busy and would miss them (a lost "mouse left" kept the
+/// notch open for good).
+pub fn open_later(target: impl Into<String>) {
+    OPEN_LATER.with(|q| q.borrow_mut().push(target.into()));
+}
+
+fn run_open_later() {
+    let list = OPEN_LATER.with(|q| std::mem::take(&mut *q.borrow_mut()));
+    for t in list {
+        let h = HSTRING::from(t.as_str());
+        unsafe {
+            ShellExecuteW(None, w!("open"), &h, None, None, SW_SHOWNORMAL);
+        }
+    }
 }
 
 /// Run `f` against the app if it exists and is not already borrowed.
@@ -407,7 +440,12 @@ impl App {
                 wheel_t: -10.0,
                 wheel_last: -10.0,
                 tab_bar: Rect::default(),
+                tab_slot: TAB_H + TAB_GAP,
                 mascot_rect: None,
+                notch_shown: None,
+                widget_seen: std::collections::HashMap::new(),
+                small_alert: None,
+                inner_drag: None,
                 onboarding: None,
                 settings_page: 0,
                 toast_bmp: None,
@@ -566,6 +604,18 @@ impl App {
     /// Queue a toast. Its chime plays when it actually appears on screen
     /// (see `frame`), never while the notch is hidden behind a full-screen app.
     fn push_toast(&mut self, t: Toast) {
+        match self.settings.alert_mode(t.key) {
+            AlertMode::Off => return,
+            // Small: a few seconds inside the closed notch (not for alerts
+            // with buttons).
+            AlertMode::Small if t.actions.is_empty() => {
+                let until = self.t() + (t.secs as f64).clamp(1.5, 3.0);
+                self.small_alert = Some((alert_widget(&t), until));
+                self.request_frame();
+                return;
+            }
+            _ => {}
+        }
         let now = self.t();
         let hidden = self.hidden;
         if let Some((cur, end)) = &mut self.toast {
@@ -611,6 +661,15 @@ impl App {
     // ------------------------------------------------------------ periodic
 
     pub fn tick(&mut self) {
+        // A lost "mouse left" message must never keep the notch open: check
+        // where the mouse really is.
+        let testing = crate::modules::agents::ISOLATED.load(std::sync::atomic::Ordering::Relaxed);
+        if self.hover && !testing && self.inner_drag.is_none() && self.rdrag.is_none() && !self.drag_files {
+            let mut p = POINT::default();
+            if unsafe { GetCursorPos(&mut p) }.is_ok() && unsafe { WindowFromPoint(p) } != self.hwnd {
+                self.on_mouse_leave();
+            }
+        }
         for i in 0..self.modules.len() {
             self.call(i, |m, c| m.tick(c));
         }
@@ -826,6 +885,189 @@ impl App {
     /// welcome tour, which keep theirs).
     fn slim_panel(&self) -> bool {
         self.settings.style == NotchStyle::Slim && !self.settings_open && self.onboarding.is_none()
+    }
+
+    /// Live activities (id, module, priority now) and widgets (with the
+    /// module they come from) of the panels that are on.
+    fn notch_items(&mut self) -> (Vec<(&'static str, usize, Option<u8>)>, Vec<(Widget, usize)>) {
+        let mut live = Vec::new();
+        let mut widgets = Vec::new();
+        for i in 0..self.modules.len() {
+            if !self.enabled(i) {
+                continue;
+            }
+            let id = self.modules[i].live_id();
+            if !id.is_empty() {
+                live.push((id, i, self.modules[i].live()));
+            }
+            widgets.extend(self.modules[i].widgets().into_iter().map(|w| (w, i)));
+        }
+        (live, widgets)
+    }
+
+    /// The rows the notch reads: your order (Custom order), or WindyLand's:
+    /// what is running, most urgent first (an agent that needs you goes
+    /// above music), then the widgets two per row, in the order switched on.
+    fn effective_rows(&self, live: &[(&'static str, usize, Option<u8>)]) -> Vec<NotchRow> {
+        let l = &self.settings.layout;
+        if l.custom {
+            return l.rows.clone();
+        }
+        auto_rows(l, live)
+    }
+
+    /// Work out what the closed notch shows.
+    fn refresh_shown(&mut self) {
+        let (live, widgets) = self.notch_items();
+        let now = self.t();
+        // When each widget's value last changed ("On change").
+        for (w, _) in &widgets {
+            match self.widget_seen.get_mut(w.id) {
+                Some(v) if v.0 != w.value => {
+                    v.0 = w.value.clone();
+                    v.1 = now;
+                }
+                Some(_) => {}
+                None => {
+                    self.widget_seen.insert(w.id, (w.value.clone(), f64::NEG_INFINITY));
+                }
+            }
+        }
+        let rows = self.effective_rows(&live);
+        let mut shown = {
+            let layout = &self.settings.layout;
+            let seen = &self.widget_seen;
+            let active = |id: &str| {
+                live.iter().any(|(l, _, p)| *l == id && p.is_some())
+                    || widgets.iter().any(|(w, _)| {
+                        w.id == id
+                            && match layout.when_of(id) {
+                                ShowWhen::Always => true,
+                                ShowWhen::Matters => !w.quiet,
+                                ShowWhen::Change => seen.get(w.id).map_or(false, |v| now - v.1 < 3.0),
+                            }
+                    })
+            };
+            let item = |id: &str| -> Option<ShownItem> {
+                if id.is_empty() {
+                    return None;
+                }
+                match live.iter().find(|(l, _, _)| *l == id) {
+                    Some((_, i, _)) => Some(ShownItem::Live(*i)),
+                    None => widgets.iter().find(|(w, _)| w.id == id).map(|(w, i)| ShownItem::W(w.clone(), *i)),
+                }
+            };
+            pick_layout(&rows, &active).and_then(|(wide, l, r)| if wide { item(&l).map(Shown::Wide) } else { Some(Shown::Pair(item(&l), item(&r))) })
+        };
+        // A small alert takes the right side (or the whole notch).
+        if let Some((w, until)) = &self.small_alert {
+            if now < *until {
+                let a = ShownItem::W(w.clone(), usize::MAX);
+                shown = Some(match shown {
+                    None => Shown::Wide(a),
+                    Some(Shown::Wide(it)) => Shown::Pair(Some(it), Some(a)),
+                    Some(Shown::Pair(l, r)) => Shown::Pair(l.or(r), Some(a)),
+                });
+            }
+        }
+        self.notch_shown = shown;
+    }
+
+    /// The panel of what the closed notch shows first (clicking opens it).
+    fn shown_owner(&self) -> Option<usize> {
+        let it = match self.notch_shown.as_ref()? {
+            Shown::Wide(it) => it,
+            Shown::Pair(l, r) => l.as_ref().or(r.as_ref())?,
+        };
+        let m = match it {
+            ShownItem::Live(i) => *i,
+            ShownItem::W(_, i) => *i,
+        };
+        (m < self.modules.len() && self.modules[m].has_tab() && self.enabled(m)).then_some(m)
+    }
+
+    /// Ids of what the closed notch shows now.
+    fn showing_ids(&self) -> Vec<String> {
+        let id = |it: &ShownItem| match it {
+            ShownItem::Live(i) => self.modules[*i].live_id().to_string(),
+            ShownItem::W(w, _) => w.id.to_string(),
+        };
+        match &self.notch_shown {
+            Some(Shown::Wide(it)) => vec![id(it)],
+            Some(Shown::Pair(l, r)) => l.iter().chain(r.iter()).map(id).collect(),
+            None => Vec::new(),
+        }
+    }
+
+    /// Everything the Widgets tab can put on the notch.
+    fn notch_catalog(&mut self) -> Vec<CatalogItem> {
+        let (live, widgets) = self.notch_items();
+        let mut out: Vec<CatalogItem> = live
+            .iter()
+            .map(|(id, i, _)| {
+                let m = &self.modules[*i];
+                let (name, detail) = live_names(id);
+                CatalogItem { id: id.to_string(), name: name.into(), icon: m.icon(), color: m.accent(), ring: None, detail: detail.into(), live: true, group: 0 }
+            })
+            .collect();
+        out.extend(widgets.into_iter().map(|(w, i)| CatalogItem {
+            id: w.id.to_string(),
+            name: w.name.to_string(),
+            icon: w.icon,
+            color: w.color,
+            ring: w.ring,
+            detail: w.detail,
+            live: false,
+            // System widgets come from the Widgets tab itself.
+            group: if self.modules[i].title() == "Widgets" || self.modules[i].title() == "System Monitor" { 1 } else { 2 },
+        }));
+        out
+    }
+
+    /// Draw what the closed notch shows into its two sides.
+    fn draw_shown(&mut self, shown: &Shown, left: Rect, right: Rect, vertical: bool, compact: bool, t: f64) {
+        let mouse = self.mouse;
+        let one = |s: &Shown| match s {
+            Shown::Wide(it) => Some(it.clone()),
+            Shown::Pair(l, r) => l.clone().or_else(|| r.clone()),
+        };
+        // Wide, or (side edges) the first one only.
+        let whole = match shown {
+            Shown::Wide(_) => one(shown),
+            Shown::Pair(..) if vertical => one(shown),
+            _ => None,
+        };
+        if let Some(it) = whole {
+            match it {
+                ShownItem::Live(i) => {
+                    let mut ui = Ui { g: &mut self.gfx, hits: &mut self.hits, module: i, mouse, t };
+                    self.modules[i].draw_live(&mut ui, left, right);
+                }
+                ShownItem::W(w, _) => {
+                    let mut ui = Ui { g: &mut self.gfx, hits: &mut self.hits, module: APP_HIT, mouse, t };
+                    draw_widget_wide(&mut ui, &w, left, right, vertical, compact);
+                }
+            }
+            return;
+        }
+        if let Shown::Pair(l, r) = shown {
+            for (it, rect, side) in [(l, left, false), (r, right, true)] {
+                if rect.w < 4.0 {
+                    continue;
+                }
+                match it {
+                    Some(ShownItem::Live(i)) => {
+                        let mut ui = Ui { g: &mut self.gfx, hits: &mut self.hits, module: *i, mouse, t };
+                        self.modules[*i].draw_live_side(&mut ui, rect, side);
+                    }
+                    Some(ShownItem::W(w, _)) => {
+                        let mut ui = Ui { g: &mut self.gfx, hits: &mut self.hits, module: APP_HIT, mouse, t };
+                        draw_widget_side(&mut ui, w, rect, side);
+                    }
+                    None => {}
+                }
+            }
+        }
     }
 
     /// Tab bar height and panel padding.
@@ -1130,9 +1372,11 @@ impl App {
                 } else if self.slim_panel() {
                     let m = &self.modules[self.tab];
                     let (mw, mh) = m.slim_min();
-                    ((m.size().0.max(modules::PANEL.0) - SLIM_TRIM.0).max(mw), (modules::PANEL.1 - SLIM_TRIM.1).max(mh))
+                    ((m.size().0.max(modules::PANEL.0) - SLIM_TRIM.0).max(mw), (modules::PANEL.1 - SLIM_TRIM.1).max(mh).max(m.size().1.min(TALL_PANEL)))
                 } else {
-                    (self.modules[self.tab].size().0.max(modules::PANEL.0), modules::PANEL.1)
+                    // A tab may be taller (the Widgets lists), never shorter.
+                    let m = &self.modules[self.tab];
+                    (m.size().0.max(modules::PANEL.0), m.size().1.clamp(modules::PANEL.1, TALL_PANEL))
                 };
                 let (tab_h, pad) = self.panel_metrics();
                 let w = (w + 2.0 * pad).clamp(380.0, CANVAS_W - 40.0);
@@ -1145,7 +1389,8 @@ impl App {
                 panel(if self.settings.style == NotchStyle::Slim { 340.0 } else { 380.0 }, h, 24.0)
             }
             Mode::Collapsed => {
-                let live = self.live_module().is_some();
+                self.refresh_shown();
+                let live = self.notch_shown.is_some();
                 let side_mascot = matches!(self.mascot_side(), Some(0 | 2));
                 match (self.look(), vertical) {
                     (NotchStyle::Full, false) if live && side_mascot => (364.0, 34.0, 13.0),
@@ -1155,7 +1400,12 @@ impl App {
                     (NotchStyle::Full, true) => (100.0, 40.0, 14.0),
                     // Slim: Full's height, narrower.
                     // Live: one width for every activity, plus a side mascot's strip.
-                    (NotchStyle::Slim, false) if live => (SLIM_LIVE_W + if side_mascot { SLIM_MASCOT_STRIP } else { 0.0 }, 34.0, 13.0),
+                    // Live: one width for everything. A side mascot takes one
+                    // side; only an item across both sides makes room for it.
+                    (NotchStyle::Slim, false) if live => {
+                        let wide = matches!(self.notch_shown, Some(Shown::Wide(_)));
+                        (SLIM_LIVE_W + if side_mascot && wide { SLIM_MASCOT_STRIP } else { 0.0 }, 34.0, 13.0)
+                    }
                     (NotchStyle::Slim, false) if side_mascot => (150.0, 32.0, 12.0),
                     (NotchStyle::Slim, false) => (120.0, 32.0, 12.0),
                     (NotchStyle::Slim, true) if live => (110.0, 40.0, 14.0),
@@ -1470,9 +1720,15 @@ impl App {
         let mut bar = self.content_rect(notch, 6.0, pad, pad).cut_top(tab_h, 8.0);
         let now = Now::get();
         let mouse = self.mouse;
-        let slot = tab_h + TAB_GAP;
         let tabs = self.tab_list();
+        // With many tabs the icons get a little narrower, so the panel's
+        // name still fits beside the clock.
+        let clock_w = self.gfx.measure(&now.hhmm(), 14.0, Weight::Semi) + 10.0;
+        let room = bar.w - (tab_h + 4.0 + TAB_GAP) - clock_w - 84.0;
+        let tw = (room / tabs.len().max(1) as f32 - TAB_GAP).clamp(24.0, tab_h).floor();
+        let slot = tw + TAB_GAP;
         self.tab_bar = bar;
+        self.tab_slot = slot;
         // The highlight pill glides to the selected tab (or the gear).
         let sel_off = if self.settings_open {
             tabs.len() as f32 * slot + 4.0
@@ -1496,19 +1752,19 @@ impl App {
         let indicators = self.indicators();
         {
             let mut ui = Ui { g: &mut self.gfx, hits: &mut self.hits, module: APP_HIT, mouse, t };
-            let pill = Rect::new(bar.x + self.pill_off, bar.y, tab_h, tab_h);
+            let pill = Rect::new(bar.x + self.pill_off, bar.y, tw, tab_h);
             if gp < 1.0 {
                 let fade = (1.0 - gp) * (1.0 - gp);
-                let (cx, cy) = (bar.x + sel_off + tab_h / 2.0, bar.cy());
+                let (cx, cy) = (bar.x + sel_off + tw / 2.0, bar.cy());
                 for k in 0..5 {
                     let rad = tab_h * 0.5 + 1.0 + k as f32 * 3.0 + gp * 6.0;
                     ui.circle(cx, cy, rad, accent.with_a(0.16 * fade * (1.0 - k as f32 / 5.0)));
                 }
             }
             let pill_c = col::TEXT.with_a(0.16).lerp(accent.with_a(0.42), (1.0 - gp) * 0.8);
-            ui.fill_rr(pill, tab_h / 2.0, pill_c);
+            ui.fill_rr(pill, tw.min(tab_h) / 2.0, pill_c);
             for &i in &tabs {
-                let tr = bar.cut_left(tab_h, TAB_GAP);
+                let tr = bar.cut_left(tw, TAB_GAP);
                 let m = &self.modules[i];
                 let sel = i == self.tab && !self.settings_open;
                 let fg = if sel && gp < 1.0 {
@@ -1524,7 +1780,7 @@ impl App {
             }
             // Settings gear, set slightly apart from the tabs.
             bar.cut_left(4.0, 0.0);
-            let gr = bar.cut_left(tab_h, TAB_GAP);
+            let gr = bar.cut_left(tw, TAB_GAP);
             let fg = if self.settings_open { col::TEXT } else { col::DIM };
             ui.icon_btn(gr, glyph::SETTINGS, GEAR, 14.0, fg, None, if self.settings_open { "Close settings" } else { "Settings" });
             // Title of the current tab + date/time on the right. With many
@@ -1582,6 +1838,13 @@ impl App {
             self.draw_settings(r, t);
         } else {
             let i = self.tab;
+            if self.modules[i].title() == "Widgets" {
+                self.refresh_shown();
+                let cat = self.notch_catalog();
+                let showing = self.showing_ids();
+                let st = self.settings.clone();
+                self.modules[i].set_widget_catalog(cat, &st, showing);
+            }
             let dx = if sliding { travel * (1.0 - e) } else { 0.0 };
             let rr = shift(self.module_rect(i, r), dx);
             let mut ui = Ui { g: &mut self.gfx, hits: &mut self.hits, module: i, mouse, t };
@@ -1858,12 +2121,12 @@ impl App {
                     self.settings.hidden_panels.push(title);
                 }
             }
-            S_POLICY => unsafe {
-                ShellExecuteW(None, w!("open"), w!("https://github.com/shabab239/WindyLand/blob/main/PRIVACY.md"), None, None, SW_SHOWNORMAL);
+            S_POLICY => {
+                open_later("https://github.com/shabab239/WindyLand/blob/main/PRIVACY.md");
             },
             S_NOTIF_ON => self.settings.notif_on = !self.settings.notif_on,
             S_NOTIF_TEXT => self.settings.notif_text = !self.settings.notif_text,
-            S_NOTIF_BANNERS => crate::modules::notifs::open_uri(w!("ms-settings:notifications")),
+            S_NOTIF_BANNERS => open_later("ms-settings:notifications"),
             S_NOTIF_UNMUTE => {
                 self.settings.extra.remove(crate::modules::notifs::MUTED_KEY);
             }
@@ -1876,14 +2139,8 @@ impl App {
                     self.call(i, |m, c| m.action(crate::modules::update::A_CHECK_NOW, (0.0, 0.0), c));
                 }
             }
-            S_DATA => unsafe {
-                let d = HSTRING::from(crate::store::dir().display().to_string());
-                ShellExecuteW(None, w!("open"), &d, None, None, SW_SHOWNORMAL);
-            },
-            S_GITHUB => unsafe {
-                let u = HSTRING::from(format!("https://github.com/{}", crate::modules::update::REPO));
-                ShellExecuteW(None, w!("open"), &u, None, None, SW_SHOWNORMAL);
-            },
+            S_DATA => open_later(crate::store::dir().display().to_string()),
+            S_GITHUB => open_later(format!("https://github.com/{}", crate::modules::update::REPO)),
             S_QUIT => self.deferred.push(Deferred::Quit),
             _ => {}
         }
@@ -2157,8 +2414,14 @@ impl App {
         if !pill || fade <= 0.0 {
             return;
         }
-        let color = match self.live_module() {
-            Some(i) => self.modules[i].live_color(),
+        let first = match &self.notch_shown {
+            Some(Shown::Wide(it)) => Some(it.clone()),
+            Some(Shown::Pair(l, r)) => l.clone().or_else(|| r.clone()),
+            None => None,
+        };
+        let color = match first {
+            Some(ShownItem::Live(i)) => self.modules[i].live_color(),
+            Some(ShownItem::W(w, _)) => w.color,
             None => col::TEXT.with_a(0.6),
         };
         // A 5 px bar, 4 px away from the edge.
@@ -2183,16 +2446,19 @@ impl App {
         let side = self.mascot_side();
         let mood_t = (t - self.mood_since) as f32;
         let fade = (mood_t / 0.6).clamp(0.0, 1.0);
-        if let Some(i) = self.live_module() {
-            // Slim: the wings fill what the clock (or a centred mascot)
-            // leaves, so the clock stays in the exact middle.
-            let slim_mid = (self.look() == NotchStyle::Slim && !vertical)
-                .then(|| if side == Some(1) { 56.0 } else { self.gfx.measure(&Now::get().hhmm(), 14.0, Weight::Semi) + 2.0 });
-            // A side mascot takes a strip of the (wider) notch; a centred one
-            // sits between the two wings.
+        if let Some(mut shown) = self.notch_shown.clone() {
+            // Slim: the wings fill what the clock leaves (a centred mascot
+            // takes the clock's place), so the clock stays in the exact
+            // middle and the sides keep their room.
+            let slim_mid = (self.look() == NotchStyle::Slim && !vertical).then(|| self.gfx.measure(&Now::get().hhmm(), 14.0, Weight::Semi) + 2.0);
+            // Slim with a side mascot and two one-side items: the mascot
+            // takes a side instead of widening the notch.
+            let in_wing = slim_mid.is_some() && matches!(side, Some(0 | 2)) && matches!(shown, Shown::Pair(..));
+            // Otherwise a side mascot takes a strip of the (wider) notch; a
+            // centred one sits between the two wings.
             let mut goal = goal;
             let mut mascot_r = None;
-            if let Some(s) = side.filter(|s| *s != 1) {
+            if let Some(s) = side.filter(|s| *s != 1 && !in_wing) {
                 let strip = SLIM_MASCOT_STRIP;
                 mascot_r = Some(if s == 0 {
                     Rect::new(goal.x + 10.0, goal.y + 2.0, strip - 4.0, goal.h - 4.0)
@@ -2221,11 +2487,29 @@ impl App {
                     Rect::new(goal.r() - pad - wing, goal.y + 2.0, wing, goal.h - 4.0),
                 )
             };
-            if side == Some(1) && !vertical && right.x - left.r() > 40.0 {
+            if side == Some(1) && !vertical && right.x - left.r() > 30.0 {
                 mascot_r = Some(Rect::new(left.r() + 2.0, goal.y + 2.0, right.x - left.r() - 4.0, goal.h - 4.0));
             }
-            let mut ui = Ui { g: &mut self.gfx, hits: &mut self.hits, module: i, mouse, t };
-            self.modules[i].draw_live(&mut ui, left, right);
+            if in_wing {
+                let on_left = side == Some(0);
+                mascot_r = Some(if on_left { left } else { right });
+                if let Shown::Pair(l, r) = &mut shown {
+                    // The item on the mascot's side moves to the free side,
+                    // or (both taken) the second one waits.
+                    let (keep, other) = if on_left { (l.take(), r.take()) } else { (r.take(), l.take()) };
+                    let item = other.or(keep);
+                    if on_left {
+                        *r = item;
+                    } else {
+                        *l = item;
+                    }
+                }
+            }
+            // Live wings are display-only; clicking anywhere expands.
+            let n_hits = self.hits.len();
+            self.draw_shown(&shown, left, right, vertical, compact, t);
+            self.hits.truncate(n_hits);
+            let mut ui = Ui { g: &mut self.gfx, hits: &mut self.hits, module: APP_HIT, mouse, t };
             // Clock in the middle, as on the idle notch (music: art left,
             // equaliser right; a timer: ring left, time left right), when
             // there is room between the wings.
@@ -2245,8 +2529,6 @@ impl App {
                 draw_mascot(&mut ui, mr, self.settings.mascot, self.mood, t, self.origin, self.scale);
                 ui.alpha = 1.0;
             }
-            // Live wings are display-only; clicking anywhere expands.
-            self.hits.retain(|h| h.module != i);
             self.mascot_rect = mascot_r;
             return;
         }
@@ -2318,9 +2600,24 @@ impl App {
             }
         }
         self.leave_at = None;
+        // Dragging inside a panel (the Widgets tab's order list)?
+        if let Some(m) = self.inner_drag {
+            self.modules[m].drag_to(x, y);
+            self.request_frame();
+            return;
+        }
         // Dragging something out of a module?
         if let Some((hit, p0)) = self.press {
             let moved = (x - p0.0).abs() + (y - p0.1).abs();
+            if moved > 5.0 && hit.module < self.modules.len() && self.modules[hit.module].drag_begin(hit.id, x, y) {
+                self.press = None;
+                self.inner_drag = Some(hit.module);
+                unsafe {
+                    SetCapture(self.hwnd);
+                }
+                self.request_frame();
+                return;
+            }
             if moved > 6.0 && hit.module < self.modules.len() {
                 if let Some(paths) = self.modules[hit.module].drag_out(hit.id) {
                     self.press = None;
@@ -2352,6 +2649,9 @@ impl App {
     }
 
     fn on_mouse_leave(&mut self) {
+        if self.inner_drag.is_some() {
+            return; // the mouse is captured until the drop
+        }
         dlog("leave");
         self.hover = false;
         self.hover_block = false;
@@ -2380,6 +2680,14 @@ impl App {
     }
 
     fn on_up(&mut self, x: f32, y: f32) {
+        if let Some(m) = self.inner_drag.take() {
+            unsafe {
+                let _ = ReleaseCapture();
+            }
+            self.call(m, |md, c| md.drag_drop(x, y, c));
+            self.request_frame();
+            return;
+        }
         dlog(format!("up ({x:.0},{y:.0}) press={:?}", self.press.map(|(h, _)| (h.module, h.id))));
         let Some((hit, _)) = self.press.take() else { return };
         if !hit.rect.contains(x, y) {
@@ -2389,7 +2697,16 @@ impl App {
         match hit.module {
             APP_HIT => {
                 if hit.id == u32::MAX {
-                    // Background click: expand, or drop keyboard focus.
+                    // Background click: expand (on the panel of what the
+                    // closed notch shows), or drop keyboard focus.
+                    if !self.expanded {
+                        if let Some(m) = self.shown_owner() {
+                            if self.tab_list().contains(&m) {
+                                self.tab = m;
+                                self.settings_open = false;
+                            }
+                        }
+                    }
                     self.expanded = true;
                     if let Some(k) = self.keyboard {
                         self.modules[k].blur();
@@ -2680,6 +2997,12 @@ impl App {
             WM_CAPTURECHANGED => {
                 if self.rdrag.take().is_some() && self.dragging {
                     self.end_drag();
+                }
+                // Lost the mouse mid-drag (Alt+Tab...): cancel, so the panel
+                // doesn't stay open waiting for a drop that never comes.
+                if let Some(m) = self.inner_drag.take() {
+                    self.call(m, |md, c| md.drag_drop(-1e4, -1e4, c));
+                    self.request_frame();
                 }
                 None
             }
@@ -3328,6 +3651,7 @@ pub fn selftest() -> String {
                     "Prayer Times" => &[1, 3, 4, 5, 2],
                     "AI Agents" => &[990, 3],
                     "Clipboard" => &[991],
+                    "Widgets" => &[6, 3, 5, 1, 6],
                     _ => &[],
                 };
                 for &v in views {
@@ -3797,6 +4121,7 @@ pub fn selftest() -> String {
                 }
                 out += &format!("{:<4} Slim live notch: {SLIM_LIVE_W} wide, wings {wing:.0} px beside a 12:58 clock, labels fit {tight:?}\n", if tight.is_empty() { "OK" } else { "FAIL" });
             }
+            out += &widget_tests(a);
             a.settings.style = before.0;
             a.settings.mascot = before.1;
             a.settings.personality = before.2;
@@ -3941,7 +4266,7 @@ pub fn selftest() -> String {
             a.queue.clear();
             a.tick();
             let again = a.toast.is_some() || !a.queue.is_empty();
-            out += &format!("{:<4} prayer reminder at the time, once ({first})\n", if first == "Time for Dhuhr" && !again { "OK" } else { "FAIL" });
+            out += &format!("{:<4} prayer reminder at the time, once ({first})\n", if first.starts_with("Time for ") && !again { "OK" } else { "FAIL" });
             // Ten minutes before: the countdown takes the closed notch.
             a.toast = None;
             a.queue.clear();
@@ -4579,14 +4904,9 @@ pub fn selftest() -> String {
             a.call(mi, |m, c| m.tick(c));
             let st = a.modules[mi].debug_state();
             let sampled = st.starts_with("cpu ") && !st.contains("samples 0");
-            let was = a.modules[mi].live();
-            a.call(mi, |m, c| m.action(1, (0.0, 0.0), c));
-            let on = a.modules[mi].live() == Some(5) && crate::store::read("settings.txt").contains("monitor_live=1");
-            a.expanded = false;
-            out += &snap(a, "monitor on the closed notch");
-            a.call(mi, |m, c| m.action(1, (0.0, 0.0), c));
-            let off = a.modules[mi].live().is_none() && crate::store::read("settings.txt").contains("monitor_live=0");
-            out += &format!("{:<4} monitor samples once a second; the closed-notch readout is off by default and toggles ({st})\n", if sampled && was.is_none() && on && off { "OK" } else { "FAIL" });
+            let ids: Vec<&str> = a.modules[mi].widgets().iter().map(|w| w.id).collect();
+            let ok = sampled && a.modules[mi].live().is_none() && ids == ["cpu", "ram", "net"];
+            out += &format!("{:<4} monitor samples once a second and offers CPU, memory and network widgets {ids:?} ({st})\n", if ok { "OK" } else { "FAIL" });
             a.expanded = true;
             a.settings_open = false;
             a.tab = mi;
@@ -4948,6 +5268,7 @@ pub fn selftest() -> String {
                     sizes.push((a.modules[i].title(), t.0 as i32, t.1 as i32));
                 }
             }
+            sizes.retain(|s| s.0 != "Widgets");
             let same = sizes.windows(2).all(|w| (w[0].1, w[0].2) == (w[1].1, w[1].2));
             out += &format!("{:<4} every tab opens to the same panel size {:?}\n", if same { "OK" } else { "FAIL" }, sizes.first().map(|s| (s.1, s.2)));
 
@@ -4971,7 +5292,7 @@ pub fn selftest() -> String {
             let ok = a.prev_shown.0 == t0 && a.switch_dir > 0.0 && old_hits == 0 && new_hits > 0 && a.gfx.last_err.is_none();
             out += &format!("{:<4} tab switch slides old content out, new in (old hits {old_hits}, new {new_hits})\n", if ok { "OK" } else { "FAIL" });
             // The highlight pill glides to the new tab instead of jumping.
-            let slot = TAB_H + TAB_GAP;
+            let slot = a.tab_slot;
             let target_off = tabs.iter().position(|&i| i == t1).unwrap_or(0) as f32 * slot;
             a.pill_off = 0.0;
             a.pill_last = a.t() - 0.016;
@@ -5445,14 +5766,52 @@ pub fn render_docs(dir: &std::path::Path) -> String {
             a.tab = m;
             shot(a, dir, "panel_monitor");
         }
+        if let Some(w) = find(a, "Widgets") {
+            a.call(w, |x, c| x.action(crate::modules::widgets::A_DEMO, (0.0, 0.0), c));
+            let layout = a.settings.layout.clone();
+            a.settings.layout = crate::store::NotchLayout::custom_rows(vec![NotchRow::wide("music"), NotchRow::pair("agents", "timer"), NotchRow::pair("bluetooth", "battery"), NotchRow::pair("cpu", "")], true);
+            a.tab = w;
+            a.call(w, |x, c| x.action(1, (0.0, 0.0), c));
+            shot(a, dir, "panel_widgets");
+            a.call(w, |x, c| x.action(2, (0.0, 0.0), c));
+            shot(a, dir, "panel_widgets_order");
+            a.call(w, |x, c| x.action(3, (0.0, 0.0), c));
+            a.settings.set_alert_mode("volume", AlertMode::Small);
+            a.settings.set_alert_mode("caps", AlertMode::Off);
+            shot(a, dir, "panel_widgets_alerts");
+            a.call(w, |x, c| x.action(5, (0.0, 0.0), c));
+            shot(a, dir, "panel_widgets_place");
+            a.call(w, |x, c| x.action(1, (0.0, 0.0), c));
+            a.settings.set_alert_mode("volume", AlertMode::Popup);
+            a.settings.set_alert_mode("caps", AlertMode::Popup);
+            // A side mascot and a centred one with two widgets, and a small
+            // alert beside a widget.
+            a.expanded = false;
+            a.settings.layout = crate::store::NotchLayout::custom_rows(vec![NotchRow::pair("date", "bluetooth")], false);
+            let m = (a.mood, a.settings.mascot_pos, a.settings.personality);
+            a.settings.personality = true;
+            a.mood = Mood::Eyes;
+            for (pos, n) in [(0u8, "widgets_mascot_left"), (1, "widgets_mascot_center")] {
+                a.settings.mascot_pos = pos;
+                shot(a, dir, n);
+            }
+            (a.mood, a.settings.mascot_pos, a.settings.personality) = m;
+            a.push_toast(Toast::new("volume", glyph::VOLUME, col::TEXT, "Volume", "").right("60%").progress(0.6).secs(3.0));
+            a.small_alert = a.small_alert.take().or_else(|| Some((alert_widget(&Toast::new("volume", glyph::VOLUME, col::TEXT, "Volume", "").right("60%").progress(0.6)), f64::MAX)));
+            if let Some(s) = &mut a.small_alert {
+                s.1 = f64::MAX;
+            }
+            a.queue.clear();
+            shot(a, dir, "widgets_small_alert");
+            a.small_alert = None;
+            a.expanded = true;
+            a.settings.layout = layout;
+        }
         // Every live activity on the closed notch, one at a time (the other
         // panels hidden), then music with a mascot beside and between.
         {
             let saved = (a.settings.hidden_panels.clone(), a.mood, a.settings.mascot_pos);
             a.expanded = false;
-            if let Some(m) = find(a, "System Monitor") {
-                a.call(m, |x, c| x.action(1, (0.0, 0.0), c)); // Show on closed notch
-            }
             let tabs: Vec<usize> = (0..a.modules.len()).filter(|&j| a.modules[j].has_tab()).collect();
             for &i in &tabs {
                 a.settings.hidden_panels = tabs.iter().filter(|&&j| j != i).map(|&j| a.modules[j].title().to_string()).collect();
@@ -5466,9 +5825,33 @@ pub fn render_docs(dir: &std::path::Path) -> String {
                 a.settings.mascot_pos = pos;
                 shot(a, dir, n);
             }
-            if let Some(m) = find(a, "System Monitor") {
-                a.call(m, |x, c| x.action(1, (0.0, 0.0), c));
+            // Widgets on the resting notch, and music beside an agent.
+            a.settings.hidden_panels.clear();
+            a.mood = Mood::Clock;
+            let layout = a.settings.layout.clone();
+            if let Some(w) = find(a, "Widgets") {
+                a.call(w, |x, c| x.action(crate::modules::widgets::A_DEMO, (0.0, 0.0), c));
             }
+            let only = |a: &mut App, keep: &[&str]| {
+                let tabs: Vec<usize> = (0..a.modules.len()).filter(|&j| a.modules[j].has_tab()).collect();
+                a.settings.hidden_panels = tabs.iter().filter(|&&j| !keep.contains(&a.modules[j].title())).map(|&j| a.modules[j].title().to_string()).collect();
+            };
+            only(a, &["Widgets", "System Monitor"]);
+            for (rows, n) in [
+                (vec![NotchRow::pair("bluetooth", "cpu")], "widgets_pair"),
+                (vec![NotchRow::wide("bluetooth")], "widgets_wide"),
+                (vec![NotchRow::pair("cpu", "net")], "widgets_monitor"),
+                (vec![NotchRow::pair("weather", "wifi")], "widgets_weather_wifi"),
+                (vec![NotchRow::wide("weather")], "widgets_weather_wide"),
+                (vec![NotchRow::pair("volume", "mic")], "widgets_sound"),
+            ] {
+                a.settings.layout = crate::store::NotchLayout::custom_rows(rows, false);
+                shot(a, dir, n);
+            }
+            only(a, &["Now Playing", "AI Agents"]);
+            a.settings.layout = crate::store::NotchLayout::custom_rows(vec![NotchRow::pair("music", "agents")], false);
+            shot(a, dir, "live_music_and_agents");
+            a.settings.layout = layout;
             (a.settings.hidden_panels, a.mood, a.settings.mascot_pos) = saved;
             a.expanded = true;
         }
@@ -6007,6 +6390,417 @@ fn onboard_tip(id: u32) -> &'static str {
 }
 
 /// Short names for Settings > Panels and the panel header.
+/// What the closed notch shows: one item across both sides, or one item
+/// on each side (either may be empty).
+#[derive(Clone, Debug)]
+enum Shown {
+    Wide(ShownItem),
+    Pair(Option<ShownItem>, Option<ShownItem>),
+}
+
+#[derive(Clone, Debug)]
+enum ShownItem {
+    /// A module's live activity (drawn by the module).
+    Live(usize),
+    /// A widget and the module it comes from (usize::MAX: an alert).
+    W(Widget, usize),
+}
+
+/// WindyLand's own order (Custom order off): what is switched on and
+/// running, most urgent first, then the widgets two per row in the order
+/// they were switched on.
+pub(crate) fn auto_rows(l: &NotchLayout, live: &[(&'static str, usize, Option<u8>)]) -> Vec<NotchRow> {
+    let mut lv: Vec<(&str, u8, usize)> = live.iter().enumerate().filter(|(_, (id, _, _))| l.contains(id)).map(|(k, (id, _, p))| (*id, p.unwrap_or(0), k)).collect();
+    lv.sort_by(|a, b| b.1.cmp(&a.1).then(a.2.cmp(&b.2)));
+    let mut rows: Vec<NotchRow> = lv.iter().map(|(id, _, _)| NotchRow::wide(id)).collect();
+    let ws: Vec<&String> = l.picked.iter().filter(|p| !live.iter().any(|(id, _, _)| id == p)).collect();
+    for c in ws.chunks(2) {
+        rows.push(NotchRow::pair(c[0], c.get(1).map_or("", |s| s.as_str())));
+    }
+    rows
+}
+
+/// An alert as a widget, for Small alerts inside the closed notch.
+fn alert_widget(t: &Toast) -> Widget {
+    let value = if !t.right.is_empty() { t.right.clone() } else { t.sub.clone() };
+    let mut w = Widget::new("alert", "Alert", t.icon, t.color, value).label(t.title.clone()).short(if !t.right.is_empty() { t.right.clone() } else { t.title.clone() }).detail(t.sub.clone());
+    if let Some(p) = t.progress {
+        w = w.ring(p);
+    }
+    w
+}
+
+/// The first row with something to show wins: (both sides, left, right).
+/// A one-side row with an empty or idle side borrows the next one-side
+/// item below it that has something to show.
+pub(crate) fn pick_layout(rows: &[NotchRow], active: &dyn Fn(&str) -> bool) -> Option<(bool, String, String)> {
+    let on = |id: &String| !id.is_empty() && active(id);
+    for (k, row) in rows.iter().enumerate() {
+        if row.wide {
+            if on(&row.left) {
+                return Some((true, row.left.clone(), String::new()));
+            }
+            continue;
+        }
+        let mut l = if on(&row.left) { row.left.clone() } else { String::new() };
+        let mut r = if on(&row.right) { row.right.clone() } else { String::new() };
+        if l.is_empty() && r.is_empty() {
+            continue;
+        }
+        'fill: for below in rows[k + 1..].iter().filter(|b| !b.wide) {
+            for id in below.ids() {
+                if l.is_empty() && r.is_empty() {
+                    break 'fill;
+                }
+                if (!l.is_empty() && !r.is_empty()) || *id == l || *id == r || !on(id) {
+                    continue;
+                }
+                if l.is_empty() {
+                    l = id.clone();
+                } else {
+                    r = id.clone();
+                }
+            }
+        }
+        return Some((false, l, r));
+    }
+    None
+}
+
+/// Self-test: the closed notch's order list, drag and drop, widgets.
+fn widget_tests(a: &mut App) -> String {
+    use crate::store::NotchLayout;
+    let mut out = String::new();
+    let ok = |b: bool| if b { "OK" } else { "FAIL" };
+    // The list round-trips through settings text.
+    let l = NotchLayout::custom_rows(vec![NotchRow::wide("music"), NotchRow::pair("agents", "battery"), NotchRow::pair("", "cpu")], true);
+    let text = l.to_text();
+    let back = NotchLayout::from_text(&text);
+    out += &format!("{:<4} widget order saves and loads ({text})\n", ok(back == l.rows && text == "*music;agents,battery;,cpu"));
+    let d = NotchLayout::default();
+    let ids: Vec<String> = d.rows.iter().map(|r| r.left.clone()).collect();
+    out += &format!("{:<4} default order keeps today's priorities {ids:?}\n", ok(ids == ["pomodoro", "timer", "prayer", "music", "agents", "due", "battery"] && d.rows[6].right == "bluetooth"));
+    // Picking what shows.
+    let pick = |rows: &[NotchRow], on: &[&str]| pick_layout(rows, &|id: &str| on.contains(&id));
+    let s = |w: bool, l: &str, r: &str| Some((w, l.to_string(), r.to_string()));
+    let music_first = vec![NotchRow::wide("music"), NotchRow::wide("agents")];
+    let agents_first = vec![NotchRow::wide("agents"), NotchRow::wide("music")];
+    let side_by_side = vec![NotchRow::pair("music", "agents")];
+    let borrow = vec![NotchRow::pair("music", "agents"), NotchRow::wide("timer"), NotchRow::pair("battery", "cpu")];
+    let cases = [
+        pick(&music_first, &["music", "agents"]) == s(true, "music", ""),
+        pick(&music_first, &["agents"]) == s(true, "agents", ""),
+        pick(&agents_first, &["music", "agents"]) == s(true, "agents", ""),
+        pick(&side_by_side, &["music", "agents"]) == s(false, "music", "agents"),
+        pick(&side_by_side, &["agents"]) == s(false, "", "agents"),
+        // An idle side borrows the next one-side item below (not a wide one).
+        pick(&borrow, &["music", "timer", "cpu"]) == s(false, "music", "cpu"),
+        pick(&borrow, &["timer", "cpu"]) == s(true, "timer", ""),
+        pick(&borrow, &["battery"]) == s(false, "battery", ""),
+        pick(&borrow, &[]).is_none(),
+    ];
+    out += &format!("{:<4} the first row with something to show wins; an empty side borrows from below {cases:?}\n", ok(cases.iter().all(|c| *c)));
+    // Drag and drop.
+    use crate::modules::widgets::{test_drop, test_toggle_size};
+    let mut r = vec![NotchRow::wide("music"), NotchRow::pair("battery", ""), NotchRow::pair("cpu", "ram")];
+    test_drop(&mut r, Some((2, true)), None, Some((1, true)), None); // ram -> beside battery
+    let a1 = r == vec![NotchRow::wide("music"), NotchRow::pair("battery", "ram"), NotchRow::pair("cpu", "")];
+    test_drop(&mut r, Some((1, false)), None, Some((1, true)), None); // swap sides
+    let a2 = r[1] == NotchRow::pair("ram", "battery");
+    test_drop(&mut r, Some((2, false)), None, None, Some(0)); // cpu to a new first row
+    let a3 = r == vec![NotchRow::pair("cpu", ""), NotchRow::wide("music"), NotchRow::pair("ram", "battery")];
+    test_drop(&mut r, None, Some(2), None, Some(0)); // row to the top
+    let a4 = r[0] == NotchRow::pair("ram", "battery") && r.len() == 3;
+    test_toggle_size(&mut r, 0); // two one-side items -> both sides: battery gets a row
+    let a5 = r[0] == NotchRow::wide("ram") && r[1] == NotchRow::pair("battery", "");
+    test_toggle_size(&mut r, 0);
+    let a6 = r[0] == NotchRow::pair("ram", "");
+    test_drop(&mut r, Some((0, false)), None, Some((3, false)), None); // onto the wide music row: swap
+    let a7 = r.iter().any(|x| *x == NotchRow::wide("ram")) && r.iter().any(|x| x.left == "music" && !x.wide);
+    out += &format!("{:<4} order list: pair, swap sides, new row, move row, both/one side {:?}\n", ok(a1 && a2 && a3 && a4 && a5 && a6 && a7), [a1, a2, a3, a4, a5, a6, a7]);
+    // AirPods broadcast: 60 % left, 70 % right, case 40 %, not charging.
+    let mut pkt = [0u8; 27];
+    pkt[0] = 0x07;
+    pkt[1] = 0x19;
+    pkt[5] = 0x00;
+    pkt[6] = 0x67;
+    pkt[7] = 0x04;
+    let p = crate::modules::widgets::decode_pods(&pkt);
+    let good = p.map_or(false, |p| p.left == Some(60) && p.right == Some(70) && p.case == Some(40) && !p.charging);
+    pkt[6] = 0xF7;
+    let unknown = crate::modules::widgets::decode_pods(&pkt).map_or(false, |p| p.left.is_none() && p.right == Some(70));
+    out += &format!("{:<4} AirPods battery broadcast decodes (L 60 R 70 case 40; unknown bud) {p:?}\n", ok(good && unknown && crate::modules::widgets::decode_pods(&pkt[..20]).is_none()));
+    // Every live panel has an id, and the Widgets tab lists everything.
+    let saved = (a.expanded, a.tab, a.settings.layout.clone());
+    let cat = a.notch_catalog();
+    let names: Vec<&str> = cat.iter().map(|c| c.id.as_str()).collect();
+    let want = ["music", "timer", "pomodoro", "prayer", "due", "agents", "cpu", "ram", "net", "bluetooth", "date", "weather", "volume", "mic"];
+    let missing: Vec<&&str> = want.iter().filter(|w| !names.contains(w)).collect();
+    out += &format!("{:<4} the Widgets tab lists live activities and widgets ({} items, missing {missing:?})\n", ok(missing.is_empty()), cat.len());
+    // Phase 2: weather (online only while it's on), Wi-Fi, sound.
+    {
+        use crate::modules::widgets as wg;
+        let path = wg::weather_path(23.8103, 90.4125, false);
+        let pf = wg::weather_path(40.71, -74.01, true);
+        let parsed = wg::parse_weather(r#"{"current":{"time":"2026-11-11T10:00","temperature_2m":28.6,"weather_code":61,"is_day":1}}"#);
+        let kinds = [wg::weather_kind(0, true).0, wg::weather_kind(3, true).0, wg::weather_kind(63, true).0, wg::weather_kind(95, false).0];
+        let ok_w = path == "/v1/forecast?latitude=23.8&longitude=90.4&current=temperature_2m,weather_code,is_day"
+            && pf.ends_with("&temperature_unit=fahrenheit")
+            && parsed == Some((28.6, 61, true))
+            && wg::parse_weather("{}").is_none()
+            && kinds == ["Clear", "Cloudy", "Rain", "Storm"];
+        out += &format!("{:<4} weather: asks Open-Meteo for the place rounded to 0.1°, reads the answer, names the sky {kinds:?}\n", ok(ok_w));
+        let off = !a.settings.layout.contains("weather") && !wg::weather_started();
+        out += &format!("{:<4} weather stays offline while its widget is off\n", ok(off || a.settings.layout.contains("weather")));
+        let wifi = wg::wifi();
+        out += &format!("INFO Wi-Fi now: {wifi:?}\n");
+        let w: Vec<String> = cat.iter().filter(|c| ["wifi", "volume", "mic"].contains(&c.id.as_str())).map(|c| format!("{} {}", c.id, c.detail)).collect();
+        out += &format!("INFO sound and Wi-Fi widgets: {w:?}\n");
+        if std::env::var("WINDYLAND_SELFTEST_ONLINE").is_ok() {
+            let (lat, lon, place) = crate::modules::prayer::location();
+            let r = crate::http::get("api.open-meteo.com", &wg::weather_path(lat, lon, false));
+            let got = r.filter(|r| r.status == 200).and_then(|r| wg::parse_weather(&String::from_utf8_lossy(&r.body)));
+            out += &format!("{:<4} live weather for {place}: {got:?}\n", ok(got.is_some()));
+        }
+    }
+    // A widget row shows on the resting notch at the live width.
+    a.settings.layout = NotchLayout::custom_rows(vec![NotchRow::pair("cpu", "date")], true);
+    a.expanded = false;
+    a.queue.clear();
+    a.toast = None;
+    let tgt = a.target();
+    let shows = a.showing_ids();
+    let full_w = tgt.0;
+    out += &format!("{:<4} widgets show when nothing is live: {shows:?}, {:.0} wide\n", ok(shows == ["cpu", "date"] && full_w >= 190.0), full_w);
+    a.settings.layout = NotchLayout::custom_rows(Vec::new(), true);
+    let tgt2 = a.target();
+    out += &format!("{:<4} an empty list leaves just the clock ({:.0} wide)\n", ok(a.showing_ids().is_empty() && tgt2.0 < full_w), tgt2.0);
+    (a.expanded, a.tab, a.settings.layout) = saved;
+    out += &widget_tests_2(a);
+    out
+}
+
+/// Self-test: simple and custom order, when-to-show, alerts, place, mascot.
+fn widget_tests_2(a: &mut App) -> String {
+    use crate::store::{Place, PlaceMode};
+    let mut out = String::new();
+    let ok = |b: bool| if b { "OK" } else { "FAIL" };
+    let saved = a.settings.clone();
+    let view = (a.expanded, a.settings_open, a.tab, a.mood);
+    // Everything new saves and loads.
+    let mut st = a.settings.clone();
+    st.layout = NotchLayout::default();
+    st.layout.custom = true;
+    st.layout.add("weather");
+    st.layout.when.insert("battery".into(), ShowWhen::Change);
+    st.layout.alerts.insert("caps".into(), AlertMode::Small);
+    st.place = Place { mode: PlaceMode::Manual, lat: 6.9271, lon: 79.8612, name: "Colombo, Sri Lanka".into(), prayer: true, fahrenheit: true };
+    st.save();
+    let back = Settings::load();
+    out += &format!("{:<4} custom order, picks, when-to-show, alert modes and place save and load\n", ok(back.layout == st.layout && back.place == st.place));
+    // Settings from the last build: an edited order stays custom.
+    crate::store::write("settings.txt", "onboarded=1\nnotch_layout=*music;cpu,\n");
+    let old = Settings::load();
+    crate::store::write("settings.txt", "onboarded=1\nnotch_layout=*pomodoro;*timer;*prayer;*music;*agents;*due;battery,bluetooth\n");
+    let plain = Settings::load();
+    let up = old.layout.custom && old.layout.picked == ["music", "cpu"] && !plain.layout.custom;
+    out += &format!("{:<4} an order edited in the last build stays a custom order; the default one becomes simple\n", ok(up));
+    a.settings = saved.clone();
+    a.settings.save();
+    // Simple mode orders by urgency: an agent that needs you above music.
+    let l = NotchLayout::default();
+    let live = [("pomodoro", 0usize, None), ("music", 1, Some(50u8)), ("agents", 2, Some(75)), ("timer", 3, None)];
+    let rows = auto_rows(&l, &live);
+    let first: Vec<&str> = rows.iter().take(2).map(|r| r.left.as_str()).collect();
+    let last = rows.last().cloned().unwrap_or_default();
+    out += &format!("{:<4} simple mode: most urgent first {first:?}, widgets two per row\n", ok(first == ["agents", "music"] && last == NotchRow::pair("battery", "bluetooth")));
+    // "On change": shows for a few seconds after the value changes.
+    a.expanded = false;
+    a.toast = None;
+    a.queue.clear();
+    let mut l = NotchLayout::custom_rows(vec![NotchRow::pair("date", "")], true);
+    l.when.insert("date".into(), ShowWhen::Change);
+    a.settings.layout = l;
+    a.widget_seen.clear();
+    a.refresh_shown();
+    let quiet_first = a.showing_ids().is_empty();
+    a.widget_seen.insert("date", ("changed".into(), f64::NEG_INFINITY));
+    a.refresh_shown();
+    let shows = a.showing_ids() == ["date"];
+    let earlier = a.t() - 5.0;
+    if let Some(v) = a.widget_seen.get_mut("date") {
+        v.1 = earlier;
+    }
+    a.refresh_shown();
+    let gone = a.showing_ids().is_empty();
+    out += &format!("{:<4} \"On change\" shows a widget for a few seconds after it changes ({quiet_first}, {shows}, {gone})\n", ok(quiet_first && shows && gone));
+    // Alerts: Small goes inside the closed notch, Off goes nowhere.
+    a.settings.layout = NotchLayout::custom_rows(vec![NotchRow::pair("cpu", "")], false);
+    a.settings.set_alert_mode("caps", AlertMode::Small);
+    a.small_alert = None;
+    a.push_toast(Toast::new("caps", glyph::CAPS, col::GREEN, "Caps Lock", "On").secs(1.6));
+    a.refresh_shown();
+    let small = a.queue.is_empty() && a.showing_ids() == ["cpu", "alert"];
+    a.small_alert = None;
+    a.settings.set_alert_mode("caps", AlertMode::Off);
+    a.push_toast(Toast::new("caps", glyph::CAPS, col::GREEN, "Caps Lock", "Off").secs(1.6));
+    let off = a.queue.is_empty() && a.small_alert.is_none();
+    a.settings.set_alert_mode("caps", AlertMode::Popup);
+    a.push_toast(Toast::new("caps", glyph::CAPS, col::GREEN, "Caps Lock", "On").secs(1.6));
+    let pop = a.queue.len() == 1;
+    a.queue.clear();
+    out += &format!("{:<4} alerts: Small shows beside what the notch shows, Off nothing, Pop-up the card ({small}, {off}, {pop})\n", ok(small && off && pop));
+    // The Settings switches for volume and Copied are the same setting.
+    a.settings.volume_overlay = false;
+    let v_off = a.settings.alert_mode("volume") == AlertMode::Off;
+    a.settings.set_alert_mode("volume", AlertMode::Small);
+    let v_on = a.settings.volume_overlay && a.settings.alert_mode("volume") == AlertMode::Small;
+    a.settings.copy_toast = true;
+    let c_on = a.settings.alert_mode("copy") == AlertMode::Popup;
+    out += &format!("{:<4} Volume overlay and Show what I copy are the same as their alert modes\n", ok(v_off && v_on && c_on));
+    // Slim with a side mascot: it takes a side and the notch stays 200
+    // (it grows only for an item across both sides).
+    a.settings.style = NotchStyle::Slim;
+    a.settings.edge = Edge::Top;
+    a.settings.personality = true;
+    a.settings.mascot_pos = 0;
+    a.mood = Mood::Eyes;
+    a.settings.layout = NotchLayout::custom_rows(vec![NotchRow::pair("cpu", "date")], false);
+    let tgt = a.target();
+    a.cur = tgt;
+    a.render(tgt, 0.0);
+    let notch = a.edge_rect(tgt.0, tgt.1);
+    let inside = a.mascot_rect.map_or(false, |m| notch.contains(m.cx(), m.cy()));
+    let pair_w = tgt.0;
+    a.settings.layout = NotchLayout::custom_rows(vec![NotchRow::wide("date")], false);
+    let wide_w = a.target().0;
+    a.settings.mascot_pos = 1;
+    a.settings.layout = NotchLayout::custom_rows(vec![NotchRow::pair("cpu", "date")], false);
+    let tgt = a.target();
+    a.cur = tgt;
+    a.render(tgt, 0.0);
+    let centre_w = tgt.0;
+    let small_mascot = a.mascot_rect.map_or(false, |m| m.w <= 60.0);
+    out += &format!(
+        "{:<4} Slim with a mascot: side mascot keeps 200 ({pair_w:.0}, mascot inside {inside}), grows only beside a both-sides item ({wide_w:.0}); centred stays 200 and small ({centre_w:.0}, {small_mascot})\n",
+        ok(pair_w == SLIM_LIVE_W && inside && wide_w > SLIM_LIVE_W && centre_w == SLIM_LIVE_W && small_mascot)
+    );
+    // Clicking the closed notch opens the panel of what it shows.
+    a.mood = Mood::Clock;
+    a.settings.personality = false;
+    a.settings.layout = NotchLayout::custom_rows(vec![NotchRow::pair("cpu", "")], false);
+    a.expanded = false;
+    a.tab = 0;
+    let tgt = a.target();
+    a.cur = tgt;
+    a.render(tgt, 0.0);
+    let bg = a.hits.iter().find(|h| h.module == APP_HIT && h.id == u32::MAX).map(|h| h.rect);
+    if let Some(r) = bg {
+        a.on_down(r.cx(), r.cy());
+        a.on_up(r.cx(), r.cy());
+    }
+    let mon = find(a, "System Monitor");
+    // A drag that loses the mouse is cancelled.
+    let w = find(a, "Widgets").unwrap_or(0);
+    a.inner_drag = Some(w);
+    a.handle(WM_CAPTURECHANGED, WPARAM(0), LPARAM(0));
+    out += &format!("{:<4} a drag that loses the mouse (Alt+Tab) is cancelled
+", ok(a.inner_drag.is_none()));
+    // Opening a folder or link waits until the click is handled.
+    open_later("about:blank");
+    let queued = OPEN_LATER.with(|q| q.borrow().len()) == 1;
+    OPEN_LATER.with(|q| q.borrow_mut().clear());
+    out += &format!("{:<4} folders and links open after the click is handled (no lost mouse messages)
+", ok(queued));
+    out += &format!("{:<4} clicking the closed notch opens what it shows (tab {})\n", ok(a.expanded && Some(a.tab) == mon), a.modules[a.tab].title());
+    a.expanded = false;
+    // Place helpers.
+    use crate::modules::widgets as wg;
+    let tz = wg::tz_city("Sri Lanka Standard Time").map(|p| p.2);
+    let cities = wg::parse_cities(r#"{"results":[{"name":"Colombo","latitude":6.93,"longitude":79.85,"country":"Sri Lanka"},{"name":"Kandy","latitude":7.29,"longitude":80.63}]}"#);
+    let near = wg::near_name(6.90, 79.86);
+    let here = wg::tz_place();
+    let ok_p = tz.as_deref() == Some("Colombo") && cities.len() == 2 && cities[0].0 == "Colombo, Sri Lanka" && cities[1].0 == "Kandy" && near == "Near Colombo";
+    out += &format!("{:<4} place: time-zone city, city search results, \"near\" names ({near}; this PC's time zone: {here:?})\n", ok(ok_p));
+    a.settings = saved;
+    a.settings.save();
+    (a.expanded, a.settings_open, a.tab, a.mood) = view;
+    a.small_alert = None;
+    out
+}
+
+/// Name and Pick-page line of each live activity.
+fn live_names(id: &str) -> (&'static str, &'static str) {
+    match id {
+        "music" => ("Music", "While a song plays"),
+        "timer" => ("Timer", "While a timer or stopwatch runs"),
+        "pomodoro" => ("Pomodoro", "During a focus session"),
+        "prayer" => ("Prayer countdown", "15 min before a prayer"),
+        "due" => ("Due tasks", "When a task is due"),
+        "agents" => ("AI agents", "While an agent works or needs you"),
+        _ => ("Live activity", ""),
+    }
+}
+
+/// Icon, or a progress ring, of a widget.
+fn widget_lead(ui: &mut Ui, r: Rect, w: &Widget) {
+    match w.ring {
+        Some(f) => {
+            ui.stroke_circle(r.cx(), r.cy(), 6.5, w.color.with_a(0.25), 2.0);
+            ui.arc(r.cx(), r.cy(), 6.5, 0.0, std::f32::consts::TAU * f, w.color, 2.0);
+        }
+        None => ui.icon(w.icon, r, 12.0, w.color),
+    }
+}
+
+/// A widget on one side of the clock: icon (or ring) and value.
+fn draw_widget_side(ui: &mut Ui, w: &Widget, r: Rect, right: bool) {
+    // Step down until it fits: icon and value, icon and short value, the
+    // value alone (no "..." in the notch).
+    let size = if r.h < 22.0 { 11.0 } else { 13.0 };
+    let lead_w = r.h.min(18.0);
+    let fits = |ui: &mut Ui, s: &str, lead: bool| ui.measure(s, size, Weight::Semi) + if lead { lead_w + 5.0 } else { 0.0 } <= r.w;
+    let (text, lead) = if fits(ui, &w.value, true) {
+        (w.value.as_str(), true)
+    } else if fits(ui, &w.short, true) {
+        (w.short.as_str(), true)
+    } else if fits(ui, &w.value, false) {
+        (w.value.as_str(), false)
+    } else {
+        (w.short.as_str(), false)
+    };
+    let tw = ui.measure(text, size, Weight::Semi);
+    if lead {
+        let (lr, tr) = side_rects(r, right, lead_w, tw, 5.0);
+        widget_lead(ui, lr, w);
+        ui.text(text, tr, size, col::TEXT, Weight::Semi, Align::Left);
+    } else {
+        ui.text(text, r, size, col::TEXT, Weight::Semi, if right { Align::Right } else { Align::Left });
+    }
+}
+
+/// A widget across both sides: icon and name left, value right (side
+/// edges: icon on top, value below).
+fn draw_widget_wide(ui: &mut Ui, w: &Widget, left: Rect, right: Rect, vertical: bool, compact: bool) {
+    if vertical {
+        widget_lead(ui, left, w);
+        if !compact {
+            ui.text(&w.value, right, 12.0, col::TEXT, Weight::Semi, Align::Center);
+        }
+        return;
+    }
+    let small = left.h < 22.0;
+    let lead = Rect::new(left.x, left.y, left.h.min(18.0), left.h);
+    widget_lead(ui, lead, w);
+    let room = left.w - lead.w - 5.0;
+    if !small && ui.measure(&w.label, 12.0, Weight::Semi) <= room {
+        ui.text(&w.label, Rect::new(lead.r() + 5.0, left.y, room, left.h), 12.0, w.color, Weight::Semi, Align::Left);
+    }
+    let vs = if small { 12.0 } else { 14.0 };
+    let v = if ui.measure(&w.value, vs, Weight::Semi) <= right.w { &w.value } else { &w.short };
+    ui.text(v, right, vs, col::TEXT, Weight::Semi, Align::Right);
+}
+
 fn panel_name(title: &'static str) -> &'static str {
     match title {
         "Now Playing" => "Music",
@@ -6112,6 +6906,7 @@ extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRES
     });
     if let Some((r, deferred)) = res {
         run_deferred(deferred);
+        run_open_later();
         if let Some(r) = r {
             return r;
         }

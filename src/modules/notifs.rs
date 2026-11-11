@@ -24,7 +24,6 @@ use windows::UI::Notifications::Management::*;
 use windows::UI::Notifications::*;
 use windows::Win32::Foundation::*;
 use windows::Win32::System::Com::*;
-use windows::Win32::UI::Shell::ShellExecuteW;
 use windows::Win32::UI::WindowsAndMessaging::*;
 
 use crate::app::WM_APP_WAKE;
@@ -489,10 +488,7 @@ impl Notifs {
             A_OPEN => {
                 // Open the app that sent it (packaged and desktop apps alike).
                 if let Some(n) = self.shown.as_ref().filter(|n| !n.aumid.is_empty()) {
-                    let target = HSTRING::from(format!("shell:AppsFolder\\{}", n.aumid));
-                    unsafe {
-                        ShellExecuteW(None, w!("open"), &target, None, None, SW_SHOWNORMAL);
-                    }
+                    crate::app::open_later(format!("shell:AppsFolder\\{}", n.aumid));
                 }
             }
             A_MUTE => {
@@ -506,8 +502,8 @@ impl Notifs {
                     ctx.toast(Toast::new("notif", glyph::MUTE, col::DIM, format!("{} muted", n.app), "Unmute in Settings > Privacy").secs(4.0));
                 }
             }
-            A_BANNERS => open_uri(w!("ms-settings:notifications")),
-            A_PRIVACY => open_uri(w!("ms-settings:privacy-notifications")),
+            A_BANNERS => open_uri("ms-settings:notifications"),
+            A_PRIVACY => open_uri("ms-settings:privacy-notifications"),
             A_DEMO | A_DEMO_INBOX => {
                 let n = Note {
                     id: 1,
@@ -564,8 +560,6 @@ pub fn demo_icon() -> (u32, u32, Vec<u8>) {
     (64, 64, px)
 }
 
-pub fn open_uri(uri: PCWSTR) {
-    unsafe {
-        ShellExecuteW(None, w!("open"), uri, None, None, SW_SHOWNORMAL);
-    }
+pub fn open_uri(uri: &str) {
+    crate::app::open_later(uri);
 }

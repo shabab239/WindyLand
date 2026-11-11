@@ -1,10 +1,6 @@
 //! File shelf: drop files onto the notch to keep them close, click to open,
 //! drag them back out into any app. Stores references (paths), not copies.
 
-use windows::core::*;
-use windows::Win32::UI::Shell::ShellExecuteW;
-use windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
-
 use crate::gfx::*;
 use crate::modules::{Ctx, Module, Rel};
 use crate::store;
@@ -263,10 +259,7 @@ impl Module for Shelf {
             return;
         }
         match kind {
-            K_OPEN => unsafe {
-                let p = HSTRING::from(self.items[i].path.as_str());
-                ShellExecuteW(None, w!("open"), &p, None, None, SW_SHOWNORMAL);
-            },
+            K_OPEN => crate::app::open_later(self.items[i].path.clone()),
             K_REMOVE => {
                 self.items.remove(i);
                 self.save();

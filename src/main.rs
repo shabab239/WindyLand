@@ -116,6 +116,19 @@ fn main() {
             // His screen may have a maximized window open: renders and tests
             // assume none unless a test says otherwise.
             app::MAXIMIZED_OVERRIDE.store(2, std::sync::atomic::Ordering::Relaxed);
+            // Tests and renders change data (tasks, settings...): never
+            // your own unless asked with --real-data.
+            let set = std::env::var("WINDYLAND_DATA_DIR").map_or(false, |d| !d.is_empty());
+            if !set && !args.iter().any(|a| a == "--real-data") {
+                let d = std::env::temp_dir().join(format!("windyland-test-{}", std::process::id()));
+                let _ = std::fs::create_dir_all(&d);
+                // Renders start past the welcome tour (the self-test checks
+                // the tour itself, from a fresh folder).
+                if !args.iter().any(|a| a == "--selftest") {
+                    let _ = std::fs::write(d.join("settings.txt"), "onboarded=1\n");
+                }
+                std::env::set_var("WINDYLAND_DATA_DIR", &d);
+            }
         }
         if let Some(i) = args.iter().position(|a| a == "--render-demo") {
             time::DEMO.store(true, std::sync::atomic::Ordering::Relaxed);

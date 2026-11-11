@@ -1,6 +1,6 @@
 //! System monitor: CPU, memory and network speed, with a minute of history,
-//! plus free space on the Windows drive and uptime. Optionally shows CPU and
-//! download speed on the closed notch. Reads Windows' own counters once a
+//! plus free space on the Windows drive and uptime. CPU, memory and
+//! download speed are also widgets for the resting notch. Reads Windows' own counters once a
 //! second (the notch already ticks once a second), so it costs nothing
 //! extra while idle.
 
@@ -11,7 +11,7 @@ use windows::Win32::System::SystemInformation::*;
 use windows::Win32::System::Threading::GetSystemTimes;
 
 use crate::gfx::*;
-use crate::modules::{Ctx, Module, Rel};
+use crate::modules::{Ctx, Module, Rel, Widget};
 use crate::time::unix_now;
 use crate::ui::Ui;
 
@@ -23,7 +23,6 @@ const C_DOWN: Color = hex(0x30D158);
 const C_UP: Color = hex(0xFF9F0A);
 const HISTORY: usize = 60;
 
-const A_LIVE: u32 = 1;
 /// Demo video / docs renders: steady made-up numbers.
 pub const A_DEMO: u32 = 990;
 
@@ -104,7 +103,7 @@ pub fn speed(bps: f64) -> String {
 }
 
 /// Short form for the closed notch: 1.2M, 340K, 0K.
-fn speed_short(bps: f64) -> String {
+pub fn speed_short(bps: f64) -> String {
     if bps >= 1024.0 * 1024.0 {
         format!("{:.1}M", bps / 1048576.0)
     } else {
@@ -139,14 +138,12 @@ pub struct Monitor {
     last_net: Option<(u64, u64, f64)>,
     disk: (u64, u64),
     disk_at: f64,
-    live: bool,
     demo: bool,
 }
 
 impl Monitor {
     pub fn new() -> Monitor {
-        let live = crate::store::Settings::load().extra.get("monitor_live").map_or(false, |v| v == "1");
-        let mut m = Monitor { hist: Vec::new(), last_cpu: None, last_net: None, disk: (0, 0), disk_at: 0.0, live, demo: false };
+        let mut m = Monitor { hist: Vec::new(), last_cpu: None, last_net: None, disk: (0, 0), disk_at: 0.0, demo: false };
         m.sample();
         m
     }
@@ -218,12 +215,6 @@ impl Monitor {
 }
 
 impl Module for Monitor {
-    fn tip(&self, id: u32) -> &'static str {
-        match id {
-            A_LIVE => "Show CPU and download speed on the closed notch",
-            _ => "",
-        }
-    }
     fn title(&self) -> &'static str {
         "System Monitor"
     }
@@ -277,8 +268,6 @@ impl Module for Monitor {
         Self::spark(ui, sp, &up, max, C_UP);
         Self::spark(ui, sp, &down, max, C_DOWN);
 
-        let mut foot = foot;
-        ui.toggle(foot.cut_right(190.0, 0.0), "Show on closed notch", self.live, A_LIVE, ACCENT);
         let (free, total) = self.disk;
         let drive = std::env::var("SystemDrive").unwrap_or_else(|_| "C:".into());
         let mut info = format!("Up {}", if crate::time::demo() { "2 d 5 h".to_string() } else { uptime() });
@@ -289,12 +278,8 @@ impl Module for Monitor {
     }
 
     fn action(&mut self, id: u32, _rel: Rel, ctx: &mut Ctx) {
+        let _ = ctx;
         match id {
-            A_LIVE => {
-                self.live = !self.live;
-                ctx.settings.extra.insert("monitor_live".into(), if self.live { "1" } else { "0" }.into());
-                ctx.settings.save();
-            }
             A_DEMO => {
                 self.demo = true;
                 self.hist = (0..HISTORY)
@@ -312,28 +297,22 @@ impl Module for Monitor {
         }
     }
 
-    fn live(&self) -> Option<u8> {
-        (self.live && self.latest().is_some()).then_some(5)
-    }
-
-    fn live_color(&self) -> Color {
-        ACCENT
-    }
-
-    fn draw_live(&mut self, ui: &mut Ui, left: Rect, right: Rect) {
-        let Some(s) = self.latest() else { return };
-        let size = (left.h * 0.46).clamp(9.0, 12.0);
-        let mut l = left;
-        let iw = if left.w < 80.0 { left.h.min(20.0) } else { left.h };
-        ui.icon(ICON, l.cut_left(iw, 2.0), (left.h * 0.46).min(12.0), C_CPU);
-        ui.text(&format!("{:.0}%", s.cpu), l, size, col::TEXT, Weight::Semi, Align::Left);
-        ui.text(&format!("\u{2193} {}", speed_short(s.down)), right, size, C_DOWN, Weight::Semi, Align::Right);
+    fn widgets(&mut self) -> Vec<Widget> {
+        let Some(s) = self.latest() else { return Vec::new() };
+        let mem = if s.mem_total > 0 { s.mem_used as f32 / s.mem_total as f32 } else { 0.0 };
+        vec![
+            Widget::new("cpu", "CPU", ICON, C_CPU, format!("{:.0}%", s.cpu)).ring(s.cpu / 100.0).detail(format!("{:.0}% in use", s.cpu)),
+            Widget::new("ram", "Memory", "\u{E964}", C_MEM, format!("{:.0}%", mem * 100.0)).label("RAM").ring(mem).detail(format!("{} of {}", gb(s.mem_used), gb(s.mem_total))),
+            Widget::new("net", "Network", "\u{E896}", C_DOWN, speed_short(s.down))
+                .label("Down")
+                .detail(format!("\u{2193} {}  \u{2191} {}", speed(s.down), speed(s.up))),
+        ]
     }
 
     fn debug_state(&self) -> String {
         match self.latest() {
-            Some(s) => format!("cpu {:.1}%, mem {} of {}, down {}, up {}, disk {} free, samples {}, live {}", s.cpu, gb(s.mem_used), gb(s.mem_total), speed(s.down), speed(s.up), gb(self.disk.0), self.hist.len(), self.live),
-            None => format!("no samples yet, live {}", self.live),
+            Some(s) => format!("cpu {:.1}%, mem {} of {}, down {}, up {}, disk {} free, samples {}", s.cpu, gb(s.mem_used), gb(s.mem_total), speed(s.down), speed(s.up), gb(self.disk.0), self.hist.len()),
+            None => "no samples yet".to_string(),
         }
     }
 }

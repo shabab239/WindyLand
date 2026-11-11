@@ -2,7 +2,7 @@
 //! you on the shoulder with a toast (Done / Snooze).
 
 use crate::gfx::*;
-use crate::modules::{Ctx, Module, Rel, Toast};
+use crate::modules::{Ctx, Module, Rel, Toast, side_rects, Widget};
 use crate::store::{self, esc, unesc};
 use crate::time::{fmt_mod, unix_now, Now};
 use crate::ui::Ui;
@@ -478,6 +478,31 @@ impl Module for Todo {
 
     fn live_color(&self) -> Color {
         col::YELLOW
+    }
+
+    fn live_id(&self) -> &'static str {
+        "due"
+    }
+
+    fn widgets(&mut self) -> Vec<Widget> {
+        let today = Now::get().day_key();
+        let open = self.tasks.iter().filter(|t| !t.done).count();
+        let done = self.tasks.iter().filter(|t| t.done && t.done_day == today).count();
+        vec![Widget::new("tasks", "Tasks", glyph::TODO, col::YELLOW, open.to_string())
+            .label("To do")
+            .detail(format!("{open} open · {done} done today"))
+            .quiet(open == 0)]
+    }
+
+    fn draw_live_side(&mut self, ui: &mut Ui, r: Rect, right: bool) {
+        // Alarm and how many are due.
+        let now = unix_now();
+        let n = self.tasks.iter().filter(|t| !t.done && t.due.map_or(false, |d| d <= now)).count();
+        let text = format!("{n} due");
+        let tw = ui.measure(&text, 12.0, Weight::Semi);
+        let (ic, tr) = side_rects(r, right, r.h.min(18.0), tw, 4.0);
+        ui.icon(glyph::ALARM, ic, 12.0, col::YELLOW);
+        ui.text(&text, tr, 12.0, col::YELLOW, Weight::Semi, Align::Left);
     }
 
     fn draw_live(&mut self, ui: &mut Ui, left: Rect, right: Rect) {

@@ -225,6 +225,7 @@ def make(data, run, read_raw, wallpaper, fake_windows, rounded_mask, font):
     single("prayer", "panel_prayer", "Prayer times", "Worked out on your PC for your city, with optional reminders.", ["16 cities or any place", "Hanafi or Shafi Asr", "Minute nudges"])
     single("agents", "panel_agents", "AI agents", "See when Hermes, Claude Code or Codex is working, needs your OK, or is done.", ["Connect with one click", "Status only, stays on your PC", "Alerts when it needs you"])
     single("monitor", "panel_monitor", "System monitor", "CPU, memory and network speed, with a minute of history.", ["Free disk space", "Optional on the closed notch"])
+    single("widgets", "panel_widgets_order", "Widgets", "Choose what the closed notch shows, and drag it into the order you want.", ["Battery and AirPods", "Two side by side", "Drag to reorder"])
     single("tools", "panel_tools_color", "Color picker", "Pick any color on your screen, then copy it as HEX, RGB or HSL.", ["Magnifier", "Recent colors", "Contrast check"])
     single("tools-calc", "panel_tools_calc", "Calculator", "Type a sum and see the answer as you type.", ["15% and +10%", "sqrt, sin, 5!", "Hex and binary"])
     single("tools-qr", "panel_tools_qr", "QR code", "Whatever you copy, as a QR code for your phone.", ["From clipboard or typed", "Copy as image", "Works offline"])

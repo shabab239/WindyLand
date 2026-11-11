@@ -13,6 +13,7 @@
 - [Tools](#tools)
 - [AI agents](#ai-agents)
 - [System monitor](#system-monitor)
+- [Widgets: what the closed notch shows](#widgets-what-the-closed-notch-shows)
 - [Uninstalling](#uninstalling)
 - [File shelf](#file-shelf)
 - [Clipboard history](#clipboard-history)
@@ -163,8 +164,70 @@ If you use **Hermes**, **Claude Code** or **Codex CLI**, the notch shows what th
 <img src="images/monitor.png" alt="System monitor">
 
 - **CPU**, **memory** and **network** (download and upload) with a one-minute graph, plus free space on the Windows drive and how long the PC has been on.
-- **Show on closed notch** puts CPU and download speed on the closed notch all the time. It's off by default.
+- CPU, memory and download speed are also widgets: switch them on in the **Widgets** tab to keep them on the closed notch.
 - It reads Windows' own counters once a second, so it adds no load.
+
+## Widgets: what the closed notch shows
+
+<img src="images/widgets.png" alt="Widgets">
+
+The **Widgets** tab decides what the closed notch shows. It has four pages; most people only need the first. The Show and Order pages open a little taller, to fit their lists.
+
+### Show (simple)
+
+Click a card to switch it on or off. The cards come in three groups:
+- **Live activities**, shown only while they run: Music, Timer, Pomodoro, Prayer countdown, Due tasks, AI agents.
+- **System**: Battery, Bluetooth (a connected device's battery), Weather, Wi-Fi, Volume, Microphone, CPU, Memory, Network, Free space, Uptime, Date.
+- **From your panels**: Water, Focus today, Tasks, Next prayer.
+
+WindyLand puts them in order for you. Whatever is running wins, the most urgent first (an AI agent that needs your OK goes above music). When nothing is running, your widgets show, two at a time, around the clock.
+
+**Only when it matters** (on by default) hides a widget with nothing to say: the battery on the charger, good Wi-Fi, sound that isn't muted, Water once the goal is reached, no open tasks.
+
+**Reset to default** puts back the default items and order. Click it twice: the first click asks.
+
+### Order (advanced)
+
+Switch on **Custom order** to arrange things yourself on the **Order** page. The notch reads its rows from the top and shows the first one with something to show:
+- A **Both sides** row uses both sides of the clock (music: art, clock, equaliser).
+- A **One side** row holds two items, one on each side of the clock (`[art ▮▮]  4:20  [🤖 3:44]`).
+- **Drag** an item onto an empty side to pair it, onto another item to swap them, or between two rows to give it a row of its own. Drag a row by its handle, or use ▲ ▼.
+- If a one-side row has an empty or idle side, the next one-side item below with something to show fills it.
+- **×** removes an item.
+- Each widget has a **when to show** tag. Click it to change: **Always**, **Matters** (only when it has something to say), or **Changes** (for a few seconds after its value changes).
+
+Examples:
+- **Music** above **AI agents**: only the song while it plays; the agent once it stops. Swap them to see the agent on top of the song. Make both **One side** in one row to see both at once.
+- **Music** both sides, then **Volume** set to **Changes**: the song stays; volume appears when you change it. (Or use the Alerts page below.)
+
+Turning Custom order off keeps your order for later.
+
+### Alerts
+
+Each alert (Volume, Copied, Battery, Network, Caps Lock, Language, Bluetooth, Mic & camera) can be:
+- **Off**,
+- **Small**: a few seconds inside the closed notch, on the right of what it shows (music stays on the left), and nothing opens,
+- **Pop-up**: the card that drops out of the notch (the default).
+
+Volume and Copied are the same settings as **Volume overlay** and **Show what I copy** in Settings. Notifications, reminders and timers, which have buttons, stay pop-ups.
+
+### Place
+
+Where you are, for the **Weather** (and prayer times, if you switch on **Use it for prayer times too**):
+- **Auto (time zone)**: the main city of Windows' time zone. Works offline and isn't fooled by a VPN, but it's only a city per time zone.
+- **Windows location**: Windows' location service. It needs **Settings > Privacy & security > Location > Let desktop apps access your location**. On a PC without GPS, Windows may itself guess from your network, so a VPN can move it.
+- **Choose a city**: type a city, press Enter and pick it. Searching asks [Open-Meteo](https://open-meteo.com).
+
+The page always shows the place in use, by name, so you can see when it's wrong.
+
+### Notes
+
+- A panel turned off in **Settings > Panels** drops out of the Widgets tab too.
+- Clicking the closed notch opens the panel of what it's showing.
+- With the mascot in the **Slim** style: in the middle it takes the clock's place; at the left or right it takes that side, and the notch stays the same size. Only beside an item using both sides does the notch grow to make room.
+- **Bluetooth** shows the battery Windows knows for connected headsets, mice and keyboards. AirPods don't share theirs with Windows, so WindyLand listens for about 3 seconds once a minute to the battery broadcast AirPods send (left, right and case, in 10% steps). It only does this while the Bluetooth widget is on (or the Widgets tab is open) and AirPods are connected. Nothing is saved or sent. In a crowded place it may sometimes pick up someone else's AirPods.
+- **Weather** is the only widget that goes online by itself: while it's on, WindyLand asks Open-Meteo about every 30 minutes, with the place rounded to about 10 km. Temperatures are in °C; switch to °F on the **Place** page.
+- **Wi-Fi** shows the signal, and the network's name when Windows allows it (the same location setting as above).
 
 ## Tools
 

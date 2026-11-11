@@ -4,7 +4,7 @@
 use std::collections::BTreeMap;
 
 use crate::gfx::*;
-use crate::modules::{Ctx, Module, Rel, Toast};
+use crate::modules::{Ctx, Module, Rel, Toast, Widget};
 use crate::store;
 use crate::time::{unix_now, Now};
 use crate::ui::Ui;
@@ -300,6 +300,14 @@ impl Module for Water {
     }
     fn size(&self) -> (f32, f32) {
         (460.0, if self.settings_page { 172.0 } else { 128.0 })
+    }
+    fn widgets(&mut self) -> Vec<Widget> {
+        let total = self.today_total(&Now::get().day_key());
+        let f = total as f32 / self.goal.max(1) as f32;
+        vec![Widget::new("water", "Water", glyph::DROP, col::CYAN, format!("{:.0}%", (f * 100.0).min(999.0)))
+            .ring(f)
+            .detail(format!("{} of {} L", liters(total), liters(self.goal)))
+            .quiet(total >= self.goal)]
     }
     fn slim_min(&self) -> (f32, f32) {
         if self.settings_page {

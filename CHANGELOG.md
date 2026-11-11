@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+- New **Widgets** tab, for what the closed notch shows and in which order.
+  - **Pick** switches items on: live activities (music, timer, Pomodoro, prayer countdown, due tasks, AI agents) and widgets: PC battery, Bluetooth device battery (AirPods too, from their battery broadcast), CPU, memory, network, free space, uptime, date, water, focus sessions today, open tasks and next prayer.
+  - **Order** arranges them in rows: one item across both sides of the clock, or two one-side items in a row. Drag items between sides and rows, drag rows (or ▲ ▼) to reorder. The first row with something to show wins, so you choose, for example, whether a song or a working agent shows when both are on.
+  - **When it matters** skips widgets with nothing to say (battery on the charger, no Bluetooth device, good Wi-Fi, sound not muted).
+  - More widgets: **Weather** (from Open-Meteo, about every 30 min, only while it's on; the privacy policy lists it), **Wi-Fi** (signal and network name), **Volume** and **Microphone** mute.
+  - Simple by default: the **Show** page switches things on and WindyLand orders them (most urgent first). **Custom order** reveals the Order page; **Reset to default** (asks first). Each widget can show **Always**, when it **Matters**, or for a few seconds when it **Changes**.
+  - **Alerts** page: Volume, Copied, Battery, Network, Caps Lock, Language, Bluetooth and Mic & camera can each be **Off**, **Small** (a few seconds inside the closed notch, beside what it shows) or a **Pop-up**.
+  - **Place** page for the weather (and prayer times if you like): the city of Windows' time zone, Windows location, or a city you search for.
+  - Slim with the mascot: in the middle it takes the clock's place, at a side it takes that side, so the notch stays 200 wide and nothing gets cut short. Tight values switch to a shorter form ("11" for "11 Nov") instead of "...".
+  - Clicking the closed notch opens the panel of what it shows. The welcome tour mentions widgets.
+  - `--selftest` and `--render-docs` use a throwaway data folder unless given `--real-data`.
+  - Weather in °C by default, °F on the Place page. The Show and Order pages open taller.
+- Fixed: after **Open data folder** (or GitHub page, Privacy policy, opening a Shelf file or a notification's app, the update page) the notch could stay open and stop reacting to hover until WindyLand restarted. Links now open after the click is handled, and a once-a-second check catches a lost "mouse left" message.
+- Fixed: a drag in the Widgets order list that lost the mouse (Alt+Tab) kept the panel open.
+  - The default order is the same as before. The System monitor's "Show on closed notch" switch is gone: CPU and network are widgets now (switched on for you if you used it).
 - The clock now stays in the middle of the closed notch while something is
   live: music (between the album art and the equaliser), the timer and
   stopwatch, Pomodoro, prayer countdown, due tasks, AI agents and the
