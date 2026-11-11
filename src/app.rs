@@ -297,6 +297,8 @@ pub struct App {
     covered_since: f64,
     near_until: f64,
     moving: bool,
+    /// The window being dragged (it only counts while it's over the notch).
+    moving_hwnd: Option<isize>,
     under_at: f64,
     was_yielding: bool,
     /// The window is click-through right now (WS_EX_TRANSPARENT).
@@ -483,6 +485,7 @@ impl App {
                 covered_since: -10.0,
                 near_until: -10.0,
                 moving: false,
+                moving_hwnd: None,
                 under_at: -10.0,
                 was_yielding: false,
                 passthrough: false,
@@ -1127,14 +1130,29 @@ impl App {
         if self.hidden || self.dock_x.is_some() {
             return false;
         }
-        let r = self.edge_rect(340.0, 46.0);
-        let (ox, oy, k) = (self.origin.0 as f32, self.origin.1 as f32, self.scale);
-        let area = RECT { left: (ox + r.x * k) as i32, top: (oy + r.y * k) as i32, right: (ox + r.r() * k) as i32, bottom: (oy + r.b() * k) as i32 };
-        let mut s = UnderSearch { area, me: self.hwnd, pid: std::process::id(), found: false };
+        let mut s = UnderSearch { area: self.notch_area(), me: self.hwnd, pid: std::process::id(), found: false };
         unsafe {
             let _ = EnumWindows(Some(under_cb), LPARAM(&mut s as *mut UnderSearch as isize));
         }
         s.found
+    }
+
+    /// The notch's place on screen (pixels), a little wider and deeper.
+    fn notch_area(&self) -> RECT {
+        let r = self.edge_rect(340.0, 46.0);
+        let (ox, oy, k) = (self.origin.0 as f32, self.origin.1 as f32, self.scale);
+        RECT { left: (ox + r.x * k) as i32, top: (oy + r.y * k) as i32, right: (ox + r.r() * k) as i32, bottom: (oy + r.b() * k) as i32 }
+    }
+
+    /// Is this one window under the notch? (A window on another screen, or
+    /// lower down, isn't.)
+    fn window_covers(&self, h: HWND) -> bool {
+        match MAXIMIZED_OVERRIDE.load(std::sync::atomic::Ordering::Relaxed) {
+            1 => return !h.0.is_null(),
+            2 => return false,
+            _ => {}
+        }
+        !h.0.is_null() && unsafe { covers(h, self.notch_area(), self.hwnd, std::process::id()) }
     }
 
     pub fn update_make_room(&mut self) {
@@ -1161,18 +1179,19 @@ impl App {
         }
     }
 
-    /// You switched windows: if one is under the notch, step aside again.
-    pub fn window_switched(&mut self) {
+    /// You switched windows: if you switched to one under the notch, step
+    /// aside again (not for a window on another screen or lower down).
+    pub fn window_switched(&mut self, h: HWND) {
         self.update_make_room();
-        if self.covered {
+        if self.covered && self.window_covers(h) {
             self.covered_since = self.t();
             self.sync_yield();
         }
     }
 
-    /// A window started (or stopped) being dragged or resized.
-    pub fn window_moving(&mut self, on: bool) {
-        self.moving = on;
+    /// A window started (or stopped) being dragged or resized. It only
+    /// counts while it is over the notch.
+    pub fn window_moving(&mut self, on: bool, h: HWND) {
         unsafe {
             if on {
                 SetTimer(self.hwnd, TIMER_MOVE, 100, None);
@@ -1180,9 +1199,25 @@ impl App {
                 let _ = KillTimer(self.hwnd, TIMER_MOVE);
             }
         }
-        if !on {
+        let over = self.window_covers(h);
+        if on {
+            self.moving_hwnd = Some(h.0 as isize);
+            self.moving = over;
+        } else {
+            self.moving_hwnd = None;
+            self.moving = false;
             // Dropped where it covers the notch: stay out of the way a moment.
-            self.covered_since = self.t();
+            if over {
+                self.covered_since = self.t();
+            }
+        }
+        self.update_make_room();
+    }
+
+    /// While a window is dragged: is it over the notch right now?
+    fn drag_tick(&mut self) {
+        if let Some(h) = self.moving_hwnd {
+            self.moving = self.window_covers(HWND(h as *mut core::ffi::c_void));
         }
         self.update_make_room();
     }
@@ -3052,7 +3087,7 @@ impl App {
                     TIMER_TICK => self.tick(),
                     TIMER_FRAME => self.timer_frame(),
                     TIMER_POLL => self.poll_cursor(),
-                    TIMER_MOVE => self.update_make_room(),
+                    TIMER_MOVE => self.drag_tick(),
                     _ => {}
                 }
                 Some(LRESULT(0))
@@ -6709,12 +6744,26 @@ fn smart_hide_tests(a: &mut App) -> String {
     a.sync_passthrough();
     // Switching to a window under it, or dragging one: steps aside.
     a.covered_since = a.t() - 10.0;
-    a.window_switched();
+    a.window_switched(a.hwnd);
     let switched = a.yielding();
     a.covered_since = a.t() - 10.0;
     a.moving = true;
     let dragging = a.yielding();
     a.moving = false;
+    // A window on the other screen (not under the notch): switching to it
+    // or dragging it doesn't make the notch step aside.
+    a.covered_since = a.t() - 10.0;
+    a.window_switched(HWND(std::ptr::null_mut()));
+    let other_switch = !a.yielding();
+    a.window_moving(true, HWND(std::ptr::null_mut()));
+    let other_drag = !a.yielding();
+    a.window_moving(false, HWND(std::ptr::null_mut()));
+    let other_drop = !a.yielding();
+    out += &format!(
+        "{:<4} smart hide: a window on another screen doesn't move it (switch, drag, drop) {:?}\n",
+        ok(other_switch && other_drag && other_drop),
+        (other_switch, other_drag, other_drop)
+    );
     out += &format!(
         "{:<4} smart hide: steps aside when a window comes under it, comes back, steps aside when the mouse is near, opens when you rest on it, steps aside on switch and drag {:?}
 ",
@@ -7007,19 +7056,19 @@ fn is_fullscreen(win: RECT, mon: RECT, zoomed: bool, class: &str) -> bool {
 
 /// Re-check full screen the moment another window takes the foreground or
 /// is minimized/restored (the 1 s tick covers everything else).
-extern "system" fn on_foreground(_h: windows::Win32::UI::Accessibility::HWINEVENTHOOK, e: u32, _w: HWND, _o: i32, _c: i32, _t: u32, _ms: u32) {
+extern "system" fn on_foreground(_h: windows::Win32::UI::Accessibility::HWINEVENTHOOK, e: u32, w: HWND, _o: i32, _c: i32, _t: u32, _ms: u32) {
     with_app(|a| {
         a.check_fullscreen();
         if e == EVENT_SYSTEM_FOREGROUND {
-            a.window_switched();
+            a.window_switched(w);
         } else {
             a.update_make_room();
         }
     });
 }
 
-extern "system" fn on_movesize(_h: windows::Win32::UI::Accessibility::HWINEVENTHOOK, e: u32, _w: HWND, _o: i32, _c: i32, _t: u32, _ms: u32) {
-    with_app(|a| a.window_moving(e == EVENT_SYSTEM_MOVESIZESTART));
+extern "system" fn on_movesize(_h: windows::Win32::UI::Accessibility::HWINEVENTHOOK, e: u32, w: HWND, _o: i32, _c: i32, _t: u32, _ms: u32) {
+    with_app(|a| a.window_moving(e == EVENT_SYSTEM_MOVESIZESTART, w));
 }
 
 /// Looking for a window under the notch (EnumWindows).
@@ -7035,29 +7084,40 @@ struct UnderSearch {
 /// the desktop and the taskbar.
 unsafe extern "system" fn under_cb(h: HWND, lp: LPARAM) -> BOOL {
     let s = &mut *(lp.0 as *mut UnderSearch);
-    if h == s.me || !IsWindowVisible(h).as_bool() || IsIconic(h).as_bool() {
-        return TRUE;
+    if covers(h, s.area, s.me, s.pid) {
+        s.found = true;
+        return FALSE;
+    }
+    TRUE
+}
+
+/// Is this window under `area`? False for our own windows, hidden,
+/// minimized and cloaked ones, tool windows, click-through overlays, the
+/// desktop, the taskbar and small popups.
+unsafe fn covers(h: HWND, area: RECT, me: HWND, me_pid: u32) -> bool {
+    if h == me || !IsWindowVisible(h).as_bool() || IsIconic(h).as_bool() {
+        return false;
     }
     let mut pid = 0u32;
     GetWindowThreadProcessId(h, Some(&mut pid));
-    if pid == s.pid {
-        return TRUE;
+    if pid == me_pid {
+        return false;
     }
     let ex = GetWindowLongPtrW(h, GWL_EXSTYLE);
     if ex & WS_EX_TOOLWINDOW.0 as isize != 0 || (ex & WS_EX_TRANSPARENT.0 as isize != 0 && ex & WS_EX_LAYERED.0 as isize != 0) {
-        return TRUE;
+        return false;
     }
     use windows::Win32::Graphics::Dwm::{DwmGetWindowAttribute, DWMWA_CLOAKED, DWMWA_EXTENDED_FRAME_BOUNDS};
     let mut cloaked = 0u32;
     let _ = DwmGetWindowAttribute(h, DWMWA_CLOAKED, &mut cloaked as *mut u32 as *mut core::ffi::c_void, 4);
     if cloaked != 0 {
-        return TRUE;
+        return false;
     }
     let mut buf = [0u16; 64];
     let n = GetClassNameW(h, &mut buf) as usize;
     let class = String::from_utf16_lossy(&buf[..n.min(buf.len())]);
     if matches!(class.as_str(), "Progman" | "WorkerW" | "Shell_TrayWnd" | "Shell_SecondaryTrayWnd") {
-        return TRUE;
+        return false;
     }
     let mut wr = RECT::default();
     if DwmGetWindowAttribute(h, DWMWA_EXTENDED_FRAME_BOUNDS, &mut wr as *mut RECT as *mut core::ffi::c_void, std::mem::size_of::<RECT>() as u32).is_err() {
@@ -7065,13 +7125,9 @@ unsafe extern "system" fn under_cb(h: HWND, lp: LPARAM) -> BOOL {
     }
     // Small popups (menus, tooltips) don't count.
     if wr.right - wr.left < 80 || wr.bottom - wr.top < 40 {
-        return TRUE;
+        return false;
     }
-    if under_rect(wr, s.area) {
-        s.found = true;
-        return FALSE;
-    }
-    TRUE
+    under_rect(wr, area)
 }
 
 /// Two screen rectangles overlap.
