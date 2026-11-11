@@ -6774,7 +6774,12 @@ fn widget_tests(a: &mut App) -> String {
     out += &format!("{:<4} widget order saves and loads ({text})\n", ok(back == l.rows && text == "*music;agents,battery;,cpu"));
     let d = NotchLayout::default();
     let ids: Vec<String> = d.rows.iter().map(|r| r.left.clone()).collect();
-    out += &format!("{:<4} default order keeps today's priorities {ids:?}\n", ok(ids == ["pomodoro", "timer", "prayer", "music", "agents", "due", "battery"] && d.rows[6].right == "bluetooth"));
+    out += &format!("{:<4} default order: live activities only, each across both sides {ids:?}\n", ok(ids == ["pomodoro", "timer", "prayer", "music", "agents", "due"] && d.rows.iter().all(|r| r.wide)));
+    // Switching a live activity on gives it both sides, above the widgets.
+    let mut l2 = NotchLayout::custom_rows(vec![NotchRow::wide("music"), NotchRow::pair("battery", "")], true);
+    l2.add("agents");
+    l2.add("cpu");
+    out += &format!("{:<4} a live activity switched on goes across both sides, above the widgets ({})\n", ok(l2.to_text() == "*music;*agents;battery,cpu"), l2.to_text());
     // Picking what shows.
     let pick = |rows: &[NotchRow], on: &[&str]| pick_layout(rows, &|id: &str| on.contains(&id));
     let s = |w: bool, l: &str, r: &str| Some((w, l.to_string(), r.to_string()));
@@ -7107,14 +7112,16 @@ fn widget_tests_2(a: &mut App) -> String {
     // Settings from the last build: an edited order stays custom.
     crate::store::write("settings.txt", "onboarded=1\nnotch_layout=*music;cpu,\n");
     let old = Settings::load();
-    crate::store::write("settings.txt", "onboarded=1\nnotch_layout=*pomodoro;*timer;*prayer;*music;*agents;*due;battery,bluetooth\n");
+    crate::store::write("settings.txt", "onboarded=1\nnotch_layout=*pomodoro;*timer;*prayer;*music;*agents;*due\n");
     let plain = Settings::load();
     let up = old.layout.custom && old.layout.picked == ["music", "cpu"] && !plain.layout.custom;
     out += &format!("{:<4} an order edited in the last build stays a custom order; the default one becomes simple\n", ok(up));
     a.settings = saved.clone();
     a.settings.save();
     // Simple mode orders by urgency: an agent that needs you above music.
-    let l = NotchLayout::default();
+    let mut l = NotchLayout::default();
+    l.add("battery");
+    l.add("bluetooth");
     let live = [("pomodoro", 0usize, None), ("music", 1, Some(50u8)), ("agents", 2, Some(75)), ("timer", 3, None)];
     let rows = auto_rows(&l, &live);
     let first: Vec<&str> = rows.iter().take(2).map(|r| r.left.as_str()).collect();

@@ -182,6 +182,8 @@ Click a card to switch it on or off. The cards come in three groups:
 - **System**: Battery, Bluetooth (a connected device's battery), Weather, Wi-Fi, Volume, Microphone, CPU, Memory, Network, Free space, Uptime, Date.
 - **From your panels**: Water, Focus today, Tasks, Next prayer.
 
+Out of the box only the live activities are on: Music, Timer, Pomodoro, Prayer countdown, AI agents and Due tasks, each across both sides of the clock. Switch on any widget you want.
+
 WindyLand puts them in order for you. Whatever is running wins, the most urgent first (an AI agent that needs your OK goes above music). When nothing is running, your widgets show, two at a time, around the clock.
 
 **Only when it matters** (on by default) hides a widget with nothing to say: the battery on the charger, good Wi-Fi, sound that isn't muted, Water once the goal is reached, no open tasks.

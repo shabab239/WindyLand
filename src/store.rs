@@ -435,14 +435,18 @@ pub struct NotchLayout {
     pub alerts: BTreeMap<String, AlertMode>,
 }
 
-const DEFAULT_PICKED: [&str; 8] = ["pomodoro", "timer", "prayer", "music", "agents", "due", "battery", "bluetooth"];
+/// The live activities only; widgets such as the battery are the user's
+/// to switch on.
+const DEFAULT_PICKED: [&str; 6] = ["pomodoro", "timer", "prayer", "music", "agents", "due"];
+
+/// Live activities: each fills both sides of the clock.
+const LIVE: [&str; 6] = ["pomodoro", "timer", "prayer", "music", "agents", "due"];
 
 impl Default for NotchLayout {
     /// Today's order: timers above prayer above music above agents above
-    /// due tasks, then the battery and a Bluetooth device's battery.
+    /// due tasks, each across both sides.
     fn default() -> NotchLayout {
-        let mut rows: Vec<NotchRow> = DEFAULT_PICKED[..6].iter().map(|id| NotchRow::wide(id)).collect();
-        rows.push(NotchRow::pair("battery", "bluetooth"));
+        let rows: Vec<NotchRow> = DEFAULT_PICKED.iter().map(|id| NotchRow::wide(id)).collect();
         NotchLayout { rows, smart: true, custom: false, picked: DEFAULT_PICKED.iter().map(|s| s.to_string()).collect(), when: BTreeMap::new(), alerts: BTreeMap::new() }
     }
 }
@@ -477,13 +481,19 @@ impl NotchLayout {
         self.rows.retain(|r| !r.is_empty());
     }
 
-    /// Switch an item on: last, as a one-side item (beside the last one
-    /// when that row has room).
+    /// Switch an item on. A live activity (music, agents...) gets its own
+    /// both-sides row after the last both-sides row; a widget goes last, as
+    /// a one-side item (beside the last one when that row has room).
     pub fn add(&mut self, id: &str) {
         if !self.contains(id) {
             self.picked.push(id.into());
         }
         if self.rows.iter().any(|r| r.ids().any(|x| x == id)) {
+            return;
+        }
+        if LIVE.contains(&id) {
+            let at = self.rows.iter().rposition(|r| r.wide).map_or(0, |k| k + 1);
+            self.rows.insert(at, NotchRow::wide(id));
             return;
         }
         match self.rows.last_mut() {
