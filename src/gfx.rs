@@ -153,6 +153,42 @@ pub mod col {
     pub const PINK: Color = hex(0xFF375F);
 }
 
+/// A colour theme (Settings > Look). Drawing code keeps using `col::`;
+/// the brush swaps the neutral colours (background, text, overlays) for the
+/// theme's, so every panel follows without changes of its own.
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub struct Theme {
+    pub key: &'static str,
+    pub name: &'static str,
+    pub bg: Color,
+    pub text: Color,
+    pub dim: Color,
+    pub faint: Color,
+    /// What white overlays (buttons, hover) become.
+    pub over: Color,
+    /// Tooltip background.
+    pub tip: Color,
+    /// Other colours are multiplied by this (darker accents on light).
+    pub tint: f32,
+    /// Liquid Glass: a blurred view of what is behind the notch.
+    pub glass: bool,
+}
+
+const fn theme(key: &'static str, name: &'static str, bg: Color, text: u32, dim: u32, faint: u32, over: u32, tip: Color, tint: f32, glass: bool) -> Theme {
+    Theme { key, name, bg, text: hex(text), dim: hex(dim), faint: hex(faint), over: hex(over), tip, tint, glass }
+}
+
+pub const THEMES: [Theme; 5] = [
+    theme("default", "Black", hex(0x000000), 0xF5F5F7, 0x9A9AA0, 0x5A5A60, 0xFFFFFF, hex(0x2A2A2E), 1.0, false),
+    theme("graphite", "Graphite", hex(0x1C1C1E), 0xF5F5F7, 0xA1A1A6, 0x6E6E73, 0xFFFFFF, hex(0x3A3A3C), 1.0, false),
+    theme("midnight", "Midnight", hex(0x0A1430), 0xEAF0FF, 0x9AAACB, 0x5B6A8A, 0xC8D6FF, hex(0x1A2648), 1.0, false),
+    theme("light", "Light", hex(0xF5F5F7), 0x1C1C1E, 0x6E6E73, 0x9C9CA1, 0x000000, hex(0xFFFFFF), 0.78, false),
+    theme("glass", "Liquid Glass", hex(0x000000).with_a(0.34), 0xFFFFFF, 0xDCDCE2, 0xA8A8B0, 0xFFFFFF, hex(0x2A2A2E).with_a(0.92), 1.0, true),
+];
+
+/// Liquid Glass over a bright backdrop: light glass with dark text.
+pub const GLASS_LIGHT: Theme = theme("glass", "Liquid Glass", hex(0xFFFFFF).with_a(0.46), 0x111114, 0x3A3A40, 0x6E6E73, 0x000000, hex(0xF2F2F7).with_a(0.95), 0.8, true);
+
 /// Segoe MDL2 / Fluent icon glyphs used across the app.
 pub mod glyph {
     pub const PLAY: &str = "\u{E768}";
@@ -242,6 +278,8 @@ pub struct Gfx {
     /// older generation must be rebuilt (see `music.rs`).
     pub gen: u32,
     layers: Vec<ID2D1Layer>,
+    /// The colour theme every draw call goes through.
+    pub theme: Theme,
 }
 
 fn d2c(c: Color, a: f32) -> D2D1_COLOR_F {
@@ -301,6 +339,7 @@ impl Gfx {
                 alpha: 1.0,
                 gen: 0,
                 layers: Vec::new(),
+                theme: THEMES[0],
             };
             g.resize(pw, ph)?;
             Ok(g)
@@ -463,7 +502,50 @@ impl Gfx {
     }
 
     fn set(&self, c: Color) {
+        unsafe { self.brush.SetColor(&d2c(self.themed(c), self.alpha)) }
+    }
+
+    /// A colour as the current theme draws it.
+    pub fn themed(&self, c: Color) -> Color {
+        let t = &self.theme;
+        if t.key == "default" {
+            return c;
+        }
+        let is = |k: Color| c.r == k.r && c.g == k.g && c.b == k.b;
+        let with = |n: Color| Color { a: c.a * n.a, ..n };
+        if is(col::NOTCH) {
+            with(t.bg)
+        } else if is(col::TEXT) {
+            with(t.text)
+        } else if is(col::DIM) {
+            with(t.dim)
+        } else if is(col::FAINT) {
+            with(t.faint)
+        } else if is(hex(0xFFFFFF)) {
+            with(t.over)
+        } else if is(hex(0x2A2A2E)) {
+            with(t.tip)
+        } else if t.tint < 1.0 {
+            Color { r: c.r * t.tint, g: c.g * t.tint, b: c.b * t.tint, a: c.a }
+        } else {
+            c
+        }
+    }
+
+    /// Colours exactly as given (theme previews, the glass rim).
+    fn set_raw(&self, c: Color) {
         unsafe { self.brush.SetColor(&d2c(c, self.alpha)) }
+    }
+
+    pub fn fill_rr_raw(&mut self, r: Rect, rad: f32, c: Color) {
+        self.set_raw(c);
+        let rr = D2D1_ROUNDED_RECT { rect: r.d2d(), radiusX: rad, radiusY: rad };
+        unsafe { self.rt.FillRoundedRectangle(&rr, &self.brush) }
+    }
+
+    pub fn stroke_geometry_raw(&mut self, geo: &ID2D1PathGeometry, c: Color, w: f32) {
+        self.set_raw(c);
+        unsafe { self.rt.DrawGeometry(geo, &self.brush, w, None) }
     }
 
     // ------------------------------------------------------------ shapes

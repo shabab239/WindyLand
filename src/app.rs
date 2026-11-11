@@ -44,6 +44,8 @@ const SLIM_TRIM: (f32, f32) = (80.0, 24.0);
 /// every activity), edge padding, the space between each wing and the
 /// clock in the middle, and the strip a side mascot adds.
 const SLIM_LIVE_W: f32 = 200.0;
+/// With seconds on the clock, the narrow notches grow this much.
+const SECONDS_W: f32 = 24.0;
 const SLIM_WING_PAD: f32 = 10.0;
 const SLIM_GAP: f32 = 6.0;
 const SLIM_MASCOT_STRIP: f32 = 62.0;
@@ -124,6 +126,8 @@ const S_PANEL: u32 = 120; // + module index
 const S_CLOCK12: u32 = 110;
 const S_MAKE_ROOM: u32 = 111;
 const S_COPY_TOAST: u32 = 112;
+const S_THEME: u32 = 200; // + index into THEMES
+const S_SECONDS: u32 = 210;
 /// Hit id of a toast's body (clicking the toast itself, not a button).
 const TOAST_BODY: u32 = 999;
 
@@ -306,7 +310,13 @@ pub struct App {
     /// While click-through: when the cursor reached the hover zone.
     poll_since: Option<f64>,
     /// Self-test: space left at the bottom of each Settings page.
-    settings_room: [f32; 3],
+    settings_room: [f32; 4],
+    /// Liquid Glass: the blurred backdrop (bitmap, gfx generation, when),
+    /// whether it is bright (light glass), and whether the notch is kept
+    /// out of screen captures.
+    backdrop: Option<(windows::Win32::Graphics::Direct2D::ID2D1Bitmap, u32, f64)>,
+    glass_light: bool,
+    excluded: bool,
     /// Hit under the mouse with a tooltip: (module, id, since, suppressed by a click).
     tip: Option<(usize, u32, f64, bool)>,
     pub deferred: Vec<Deferred>,
@@ -490,7 +500,10 @@ impl App {
                 was_yielding: false,
                 passthrough: false,
                 poll_since: None,
-                settings_room: [0.0; 3],
+                settings_room: [0.0; 4],
+                backdrop: None,
+                glass_light: false,
+                excluded: false,
                 tip: None,
                 deferred: Vec::new(),
                 pet: None,
@@ -704,6 +717,7 @@ impl App {
         }
         self.check_fullscreen();
         crate::time::H12.store(self.settings.clock12, std::sync::atomic::Ordering::Relaxed);
+        crate::time::SECONDS.store(self.settings.seconds, std::sync::atomic::Ordering::Relaxed);
         self.update_make_room();
         self.update_mood();
         self.sync_pet();
@@ -1093,6 +1107,64 @@ impl App {
                 }
             }
         }
+    }
+
+    /// The theme to draw with (Liquid Glass picks light or dark glass from
+    /// how bright the backdrop is), and keep the notch out of screen
+    /// captures while Liquid Glass needs to see behind itself.
+    fn apply_theme(&mut self) {
+        let th = match self.settings.theme.as_str() {
+            "glass" if self.glass_light => crate::gfx::GLASS_LIGHT,
+            k => crate::gfx::THEMES.iter().find(|t| t.key == k).copied().unwrap_or(crate::gfx::THEMES[0]),
+        };
+        self.gfx.theme = th;
+        let testing = crate::modules::agents::ISOLATED.load(std::sync::atomic::Ordering::Relaxed);
+        let want = th.glass && !testing;
+        if want != self.excluded {
+            crate::glass::exclude_from_capture(self.hwnd, want);
+            self.excluded = want;
+        }
+        if !th.glass {
+            self.backdrop = None;
+        }
+    }
+
+    /// Refresh the glass backdrop: up to ten times a second while the notch
+    /// moves, once a second at rest.
+    fn update_backdrop(&mut self, notch: Rect, t: f64, dist: f32) {
+        let fresh = match &self.backdrop {
+            Some((_, g, at)) => *g == self.gfx.gen && t - at < if dist > 0.5 { 0.1 } else { 1.0 },
+            None => false,
+        };
+        if fresh {
+            return;
+        }
+        let testing = crate::modules::agents::ISOLATED.load(std::sync::atomic::Ordering::Relaxed);
+        let data = if testing {
+            // Renders and tests: a made-up background (light, dark, colour).
+            let kind = std::env::var("WINDYLAND_RENDER_BACKDROP").unwrap_or_else(|_| "color".into());
+            let (w, h) = (((notch.w * self.scale) as u32 / 4).max(2), ((notch.h * self.scale) as u32 / 4).max(2));
+            Some(crate::glass::sample(&kind, w, h))
+        } else {
+            let (ox, oy, k) = (self.origin.0 as f32, self.origin.1 as f32, self.scale);
+            crate::glass::capture(RECT { left: (ox + notch.x * k) as i32, top: (oy + notch.y * k) as i32, right: (ox + notch.r() * k) as i32, bottom: (oy + notch.b() * k) as i32 })
+        };
+        let Some((w, h, px, lum)) = data else { return };
+        // Light glass over bright backgrounds, dark glass over dark ones (a
+        // little hysteresis so it doesn't flicker).
+        if lum > 0.62 {
+            self.glass_light = true;
+        } else if lum < 0.5 {
+            self.glass_light = false;
+        }
+        if let Some(b) = self.gfx.make_bitmap(w, h, &px) {
+            self.backdrop = Some((b, self.gfx.gen, t));
+        }
+    }
+
+    /// Slim's width while something shows (wider with seconds).
+    fn slim_live_w(&self) -> f32 {
+        SLIM_LIVE_W + if self.settings.seconds { SECONDS_W } else { 0.0 }
     }
 
     /// Tab bar height and panel padding.
@@ -1513,6 +1585,8 @@ impl App {
                 self.refresh_shown();
                 let live = self.notch_shown.is_some();
                 let side_mascot = matches!(self.mascot_side(), Some(0 | 2));
+                // Seconds on the clock: the narrow notches grow a little.
+                let sec = if self.settings.seconds { SECONDS_W } else { 0.0 };
                 match (self.look(), vertical) {
                     (NotchStyle::Full, false) if live && side_mascot => (364.0, 34.0, 13.0),
                     (NotchStyle::Full, false) if live => (300.0, 34.0, 13.0),
@@ -1525,14 +1599,14 @@ impl App {
                     // side; only an item across both sides makes room for it.
                     (NotchStyle::Slim, false) if live => {
                         let wide = matches!(self.notch_shown, Some(Shown::Wide(_)));
-                        (SLIM_LIVE_W + if side_mascot && wide { SLIM_MASCOT_STRIP } else { 0.0 }, 34.0, 13.0)
+                        (self.slim_live_w() + if side_mascot && wide { SLIM_MASCOT_STRIP } else { 0.0 }, 34.0, 13.0)
                     }
-                    (NotchStyle::Slim, false) if side_mascot => (150.0, 32.0, 12.0),
-                    (NotchStyle::Slim, false) => (120.0, 32.0, 12.0),
+                    (NotchStyle::Slim, false) if side_mascot => (150.0 + sec, 32.0, 12.0),
+                    (NotchStyle::Slim, false) => (120.0 + sec, 32.0, 12.0),
                     (NotchStyle::Slim, true) if live => (110.0, 40.0, 14.0),
                     (NotchStyle::Slim, true) => (80.0, 40.0, 14.0),
-                    (NotchStyle::Compact, false) if live => (190.0, 22.0, 9.0),
-                    (NotchStyle::Compact, false) => (96.0, 20.0, 8.0),
+                    (NotchStyle::Compact, false) if live => (190.0 + sec, 22.0, 9.0),
+                    (NotchStyle::Compact, false) => (96.0 + sec, 20.0, 8.0),
                     (NotchStyle::Compact, true) if live => (64.0, 26.0, 10.0),
                     (NotchStyle::Compact, true) => (60.0, 26.0, 10.0),
                     // No black notch at all; the bar is drawn separately.
@@ -1732,12 +1806,35 @@ impl App {
         let content_alpha = if switching { 1.0 } else { (1.0 - dist / 50.0).clamp(0.0, 1.0) };
 
         self.hits.clear();
+        self.apply_theme();
         self.gfx.begin(self.scale);
         let ear = (depth / 4.0).min(9.0);
         let barless = matches!(self.look(), NotchStyle::Pill | NotchStyle::Hidden);
         if depth >= 0.5 {
             if let Some(geo) = self.gfx.notch_geometry(notch, rad, ear, edge) {
+                let glass = self.gfx.theme.glass;
+                if glass {
+                    // Liquid Glass: what is behind, blurred, under a tint.
+                    self.update_backdrop(notch, t, dist);
+                    if let Some((b, _, _)) = self.backdrop.clone() {
+                        self.gfx.push_layer(Some(&geo), 1.0);
+                        self.gfx.image_rr(&b, notch, 0.0);
+                        self.gfx.pop_layer();
+                    }
+                }
                 self.gfx.fill_geometry(&geo, col::NOTCH);
+                if glass {
+                    // A soft sheen from the top and a bright rim.
+                    let light = self.glass_light;
+                    self.gfx.push_layer(Some(&geo), 1.0);
+                    for k in 0..8 {
+                        let f = k as f32 / 8.0;
+                        let band = Rect::new(notch.x, notch.y + notch.h * 0.5 * f, notch.w, notch.h * 0.5 / 8.0 + 0.5);
+                        self.gfx.fill_rr_raw(band, 0.0, hex(0xFFFFFF).with_a((if light { 0.16 } else { 0.11 }) * (1.0 - f)));
+                    }
+                    self.gfx.pop_layer();
+                    self.gfx.stroke_geometry_raw(&geo, hex(0xFFFFFF).with_a(if light { 0.9 } else { 0.42 }), 1.2);
+                }
                 self.gfx.push_layer(Some(&geo), content_alpha);
                 match mode {
                     Mode::Expanded if self.onboarding.is_some() => self.draw_onboarding(goal, t),
@@ -2122,8 +2219,8 @@ impl App {
 
         // The right column has three pages.
         let seg = right.cut_top(26.0, 12.0);
-        for (i, (cell, name)) in seg.columns(3, 6.0).into_iter().zip(["General", "Privacy", "Panels"]).enumerate() {
-            ui.chip(cell, name, S_PAGE + i as u32, page == i as u8, accent);
+        for (cell, (i, name)) in seg.columns(4, 6.0).into_iter().zip([(0u8, "General"), (3, "Look"), (1, "Privacy"), (2, "Panels")]) {
+            ui.chip(cell, name, S_PAGE + i as u32, page == i, accent);
         }
         let half = |rr: &mut Rect, gap: f32| {
             let row = rr.cut_top(26.0, gap);
@@ -2149,8 +2246,9 @@ impl App {
         } else if page == 2 {
             label(&mut ui, right.cut_top(16.0, 4.0), "Show these panels");
             let rows = (panels.len() + 1) / 2;
-            let grid = right.cut_top(rows as f32 * 26.0 + (rows.max(1) - 1) as f32 * 6.0, 8.0);
-            for (row_i, row) in grid.rows(rows, 6.0).into_iter().enumerate() {
+            // Tighter rows: there are 14 panels.
+            let grid = right.cut_top(rows as f32 * 22.0 + (rows.max(1) - 1) as f32 * 4.0, 8.0);
+            for (row_i, row) in grid.rows(rows, 4.0).into_iter().enumerate() {
                 for (col_i, cell) in row.columns(2, 6.0).into_iter().enumerate() {
                     let Some(&(i, name, icon, on)) = panels.get(row_i * 2 + col_i) else { continue };
                     ui.chip(cell, "", S_PANEL + i as u32, on, accent);
@@ -2163,6 +2261,52 @@ impl App {
             }
             ui.text_wrap("A hidden panel is off: no tab, no reminders. Scroll the wheel on the open notch to switch panels.", right.cut_top(28.0, 0.0), 10.5, col::DIM, Weight::Regular, Align::Left);
             self.settings_room[2] = r.b() - right.y;
+        } else if page == 3 {
+            label(&mut ui, right.cut_top(16.0, 4.0), "Theme");
+            let rows = [right.cut_top(58.0, 6.0), right.cut_top(58.0, 8.0)];
+            let saved = ui.theme;
+            ui.theme = crate::gfx::THEMES[0];
+            for (i, th) in crate::gfx::THEMES.iter().enumerate() {
+                let cell = rows[i / 3].columns(3, 6.0)[i % 3];
+                let sel = st.theme == th.key;
+                let bg = if sel { accent.with_a(0.22) } else if ui.hovered(cell) { col::BTN_HOVER } else { col::BTN };
+                ui.fill_rr(cell, 10.0, bg);
+                if sel {
+                    ui.stroke_rr(cell, 10.0, accent.with_a(0.85), 1.4);
+                }
+                let mut c = cell.inset(6.0);
+                let screen = c.cut_top(28.0, 3.0);
+                // A little screen with the notch in that theme.
+                if th.glass {
+                    for (k, colr) in [0x7B5CFF, 0xFF8A5B, 0x3CC8C8].into_iter().enumerate() {
+                        let w = screen.w / 3.0;
+                        ui.fill_rr_raw(Rect::new(screen.x + k as f32 * w, screen.y, w + 0.5, screen.h), 0.0, hex(colr));
+                    }
+                } else {
+                    ui.fill_rr_raw(screen, 5.0, hex(0x4A4A52));
+                }
+                let n = Rect::new(screen.cx() - 22.0, screen.y + 3.0, 44.0, 14.0);
+                ui.fill_rr_raw(n, 6.0, th.bg);
+                if th.glass {
+                    ui.stroke_rr(n, 6.0, hex(0xFFFFFF).with_a(0.6), 1.0);
+                }
+                ui.theme = *th;
+                ui.text("4:20", n, 8.5, col::TEXT, Weight::Semi, Align::Center);
+                // The name in the theme the panel is drawn in.
+                ui.theme = saved;
+                ui.text(th.name, c, 10.5, if sel { col::TEXT } else { col::DIM }, Weight::Semi, Align::Center);
+                ui.theme = crate::gfx::THEMES[0];
+                ui.hit(cell, S_THEME + i as u32);
+            }
+            ui.theme = saved;
+            ui.toggle(right.cut_top(26.0, 6.0), "Show seconds", st.seconds, S_SECONDS, accent);
+            let note = if st.theme == "glass" {
+                "Liquid Glass blurs what's behind the notch, so the notch is left out of screenshots and screen sharing."
+            } else {
+                "Themes change the notch and every panel. Liquid Glass adapts to what's behind it."
+            };
+            ui.text_wrap(note, right.cut_top(44.0, 0.0), 10.5, col::DIM, Weight::Regular, Align::Left);
+            self.settings_room[3] = r.b() - right.y;
         } else {
             label(&mut ui, right.cut_top(16.0, 2.0), "Windows notifications");
             ui.toggle(right.cut_top(26.0, 0.0), "Show them in the notch", st.notif_on, S_NOTIF_ON, accent);
@@ -2225,7 +2369,15 @@ impl App {
                 self.settings.make_room = !self.settings.make_room;
                 self.sync_passthrough();
             }
-            i if (S_PAGE..S_PAGE + 3).contains(&i) => self.settings_page = (i - S_PAGE) as u8,
+            i if (S_PAGE..S_PAGE + 4).contains(&i) => self.settings_page = (i - S_PAGE) as u8,
+            i if (S_THEME..S_THEME + crate::gfx::THEMES.len() as u32).contains(&i) => {
+                self.settings.theme = crate::gfx::THEMES[(i - S_THEME) as usize].key.to_string();
+                self.backdrop = None;
+            }
+            S_SECONDS => {
+                self.settings.seconds = !self.settings.seconds;
+                crate::time::SECONDS.store(self.settings.seconds, std::sync::atomic::Ordering::Relaxed);
+            }
             S_MASCOT_ALWAYS => self.settings.mascot_always = !self.settings.mascot_always,
             S_TASKBAR_PET => {
                 let on = self.settings.extra.get("taskbar_pet").map_or(false, |v| v == "1");
@@ -2674,11 +2826,14 @@ impl App {
                 let size = if compact { 11.0 } else { 14.0 };
                 if vertical {
                     // Stacked hours over minutes.
-                    let half = area.h.min(size * 2.6) / 2.0;
-                    let top = Rect::new(area.x, area.cy() - half, area.w, half);
-                    let bot = Rect::new(area.x, area.cy(), area.w, half);
-                    ui.text(&format!("{:02}", now.hour), top, size, col::TEXT, Weight::Semi, Align::Center);
-                    ui.text(&format!("{:02}", now.min), bot, size, col::DIM, Weight::Semi, Align::Center);
+                    let lines = if self.settings.seconds { 3.0 } else { 2.0 };
+                    let line = area.h.min(size * 1.3 * lines) / lines;
+                    let y0 = area.cy() - line * lines / 2.0;
+                    ui.text(&format!("{:02}", now.hour), Rect::new(area.x, y0, area.w, line), size, col::TEXT, Weight::Semi, Align::Center);
+                    ui.text(&format!("{:02}", now.min), Rect::new(area.x, y0 + line, area.w, line), size, col::DIM, Weight::Semi, Align::Center);
+                    if self.settings.seconds {
+                        ui.text(&format!("{:02}", now.sec), Rect::new(area.x, y0 + 2.0 * line, area.w, line), size * 0.85, col::FAINT, Weight::Semi, Align::Center);
+                    }
                 } else {
                     ui.text(&now.hhmm(), area, size, col::TEXT, Weight::Semi, Align::Center);
                 }
@@ -5751,6 +5906,12 @@ pub fn render_docs(dir: &std::path::Path) -> String {
         // WINDYLAND_RENDER_STYLE=slim renders every shot in another style (for checking layouts).
         let base = std::env::var("WINDYLAND_RENDER_STYLE").ok().and_then(|s| NotchStyle::from_key(&s)).unwrap_or(NotchStyle::Full);
         a.settings.style = base;
+        // WINDYLAND_RENDER_THEME / WINDYLAND_RENDER_SECONDS: renders in a theme, with seconds.
+        if let Ok(t) = std::env::var("WINDYLAND_RENDER_THEME") {
+            a.settings.theme = t;
+        }
+        a.settings.seconds = std::env::var("WINDYLAND_RENDER_SECONDS").is_ok();
+        crate::time::SECONDS.store(a.settings.seconds, std::sync::atomic::Ordering::Relaxed);
         a.settings.edge = Edge::Top;
         a.settings.personality = true;
         a.anchor = CANVAS_W / 2.0;
@@ -5888,6 +6049,10 @@ pub fn render_docs(dir: &std::path::Path) -> String {
             a.tab = m;
             shot(a, dir, "panel_monitor");
         }
+        if let Some(c) = find(a, "Calendar") {
+            a.tab = c;
+            shot(a, dir, "panel_calendar");
+        }
         if let Some(w) = find(a, "Widgets") {
             a.call(w, |x, c| x.action(crate::modules::widgets::A_DEMO, (0.0, 0.0), c));
             let layout = a.settings.layout.clone();
@@ -5982,6 +6147,8 @@ pub fn render_docs(dir: &std::path::Path) -> String {
         shot(a, dir, "settings_general");
         a.settings_page = 1;
         shot(a, dir, "settings_privacy");
+        a.settings_page = 3;
+        shot(a, dir, "settings_look");
         a.settings_page = 0;
         a.settings_open = false;
         a.start_onboarding();
@@ -6457,6 +6624,8 @@ fn draw_mascot(ui: &mut Ui, area: Rect, kind: Mascot, mood: Mood, t: f64, origin
 /// Tooltips for Settings hits (by id).
 fn settings_tip(id: u32) -> &'static str {
     match id {
+        i if (S_THEME..S_THEME + 10).contains(&i) => "Use this theme for the notch and every panel",
+        S_SECONDS => "Show seconds on the clock (the notch gets a little wider)",
         S_STYLE => "Clock, music and mascot in a notch",
         11 => "Like Full, but narrower; the open panel is smaller too",
         12 => "A smaller notch",
@@ -6473,6 +6642,7 @@ fn settings_tip(id: u32) -> &'static str {
         90 => "Style, startup and updates",
         91 => "Notifications, mic dots and clipboard",
         92 => "Show or hide panels",
+        93 => "Theme and seconds on the clock",
         S_STARTUP => "Start WindyLand when you sign in to Windows",
         S_VOLUME => "Show a bar when you change the volume",
         S_UPDATE_AUTO => "Look for new versions twice a day",
@@ -6700,6 +6870,114 @@ fn widget_tests(a: &mut App) -> String {
     (a.expanded, a.tab, a.settings.layout) = saved;
     out += &widget_tests_2(a);
     out += &smart_hide_tests(a);
+    out += &look_tests(a);
+    out
+}
+
+/// Self-test: themes are readable, seconds widen the clock, the calendar.
+fn look_tests(a: &mut App) -> String {
+    use crate::gfx::{Theme, GLASS_LIGHT, THEMES};
+    let ok = |b: bool| if b { "OK" } else { "FAIL" };
+    let mut out = String::new();
+    let start = (a.expanded, a.settings_open, a.tab, a.settings.layout.clone(), a.settings.style, a.settings.theme.clone());
+    let lum = |c: Color| {
+        let f = |v: f32| if v <= 0.03928 { v / 12.92 } else { ((v + 0.055) / 1.055).powf(2.4) };
+        0.2126 * f(c.r) + 0.7152 * f(c.g) + 0.0722 * f(c.b)
+    };
+    let contrast = |x: Color, y: Color| {
+        let (l1, l2) = (lum(x), lum(y));
+        (l1.max(l2) + 0.05) / (l1.min(l2) + 0.05)
+    };
+    let over = |top: Color, under: Color| Color { r: top.r * top.a + under.r * (1.0 - top.a), g: top.g * top.a + under.g * (1.0 - top.a), b: top.b * top.a + under.b * (1.0 - top.a), a: 1.0 };
+    // Solid themes: text, dim text, and a button over the background.
+    let mut weak = Vec::new();
+    for t in THEMES.iter().filter(|t| !t.glass) {
+        let bg = Color { a: 1.0, ..t.bg };
+        let btn = over(Color { a: 0.09, ..t.over }, bg);
+        let (ct, cd, cb) = (contrast(t.text, bg), contrast(t.dim, bg), contrast(t.text, btn));
+        if ct < 7.0 || cd < 3.0 || cb < 7.0 {
+            weak.push(format!("{} {ct:.1}/{cd:.1}/{cb:.1}", t.key));
+        }
+    }
+    // Liquid Glass over light, dark and colourful backdrops, every pixel:
+    // the glass picks light or dark from the backdrop's brightness.
+    let mut worst = Vec::new();
+    for kind in ["light", "dark", "color"] {
+        let (w, h, px, l) = crate::glass::sample(kind, 60, 20);
+        let _ = (w, h);
+        let t: Theme = if l > 0.62 { GLASS_LIGHT } else { THEMES[4] };
+        let mut min = f32::MAX;
+        for p in px.chunks_exact(4) {
+            let back = Color { r: p[2] as f32 / 255.0, g: p[1] as f32 / 255.0, b: p[0] as f32 / 255.0, a: 1.0 };
+            min = min.min(contrast(t.text, over(t.bg, back)));
+        }
+        worst.push(format!("{kind} {:.1}", min));
+        if min < 4.5 {
+            weak.push(format!("glass on {kind} {min:.1}"));
+        }
+    }
+    out += &format!("{:<4} every theme's text is readable (WCAG AA or better), Liquid Glass on light, dark and colour backdrops {worst:?} {weak:?}
+", ok(weak.is_empty()));
+    // Each theme draws: the panel and the closed notch render without errors.
+    let saved = (a.settings.theme.clone(), a.settings.style, a.expanded, a.tab, a.settings_open);
+    let mut bad = Vec::new();
+    for t in THEMES.iter() {
+        a.settings.theme = t.key.to_string();
+        for open in [false, true] {
+            a.expanded = open;
+            a.settings_open = false;
+            let tgt = a.target();
+            a.cur = tgt;
+            a.render(tgt, 0.0);
+            if a.gfx.last_err.is_some() || a.gfx.bright() == 0 && t.key != "light" {
+                bad.push(format!("{} open {open}", t.key));
+            }
+        }
+    }
+    let glass_drawn = a.backdrop.is_some();
+    out += &format!("{:<4} every theme draws the notch and panels; Liquid Glass has its backdrop {bad:?} {glass_drawn}
+", ok(bad.is_empty() && glass_drawn));
+    (a.settings.theme, a.settings.style, a.expanded, a.tab, a.settings_open) = saved;
+    a.backdrop = None;
+    // Seconds: the clock face and the narrow notches grow.
+    let o = std::sync::atomic::Ordering::Relaxed;
+    let style = a.settings.style;
+    a.expanded = false;
+    a.settings.layout = crate::store::NotchLayout::custom_rows(Vec::new(), true);
+    let mut widths = Vec::new();
+    for s in [NotchStyle::Slim, NotchStyle::Compact] {
+        a.settings.style = s;
+        a.settings.seconds = false;
+        crate::time::SECONDS.store(false, o);
+        let w0 = a.target().0;
+        a.settings.seconds = true;
+        crate::time::SECONDS.store(true, o);
+        let w1 = a.target().0;
+        widths.push((w0, w1));
+    }
+    let face = Now::get().hhmm();
+    let fits = {
+        let mid = a.gfx.measure("12:58:59", 14.0, Weight::Semi) + 2.0;
+        let wing = a.slim_live_w() / 2.0 - mid / 2.0 - SLIM_GAP - SLIM_WING_PAD;
+        let room = a.gfx.measure("Timer", 12.0, Weight::Semi) + 18.0 + 5.0;
+        wing >= room
+    };
+    a.settings.seconds = false;
+    crate::time::SECONDS.store(false, o);
+    a.settings.style = style;
+    let grow = widths.iter().all(|(w0, w1)| w1 > w0);
+    out += &format!("{:<4} seconds: the clock shows them ({face}), Slim and Compact grow {widths:?}, labels still fit beside 12:58:59 ({fits})
+", ok(grow && face.matches(':').count() == 2 && fits));
+    // Calendar: the month grid.
+    use crate::modules::calendar::month_grid;
+    let g = month_grid(2026, 11, 1);
+    let nov = g.len() == 42 && g[0] == (2026, 10, 26) && g.iter().filter(|d| d.1 == 11).count() == 30 && g.contains(&(2026, 11, 30));
+    let feb = month_grid(2024, 2, 0).iter().filter(|d| d.1 == 2).count() == 29;
+    let sun = month_grid(2026, 11, 0)[0] == (2026, 11, 1);
+    let wd = crate::time::weekday(2026, 11, 11) == 3;
+    out += &format!("{:<4} calendar: month grid (Monday or Sunday first), leap February, weekdays ({nov}, {feb}, {sun}, {wd})
+", ok(nov && feb && sun && wd));
+    (a.expanded, a.settings_open, a.tab, a.settings.layout, a.settings.style, a.settings.theme) = start;
     out
 }
 

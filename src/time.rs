@@ -16,6 +16,14 @@ pub fn demo() -> bool {
 /// 12-hour clock (Settings > General); mirrors `Settings::clock12`.
 pub static H12: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
 
+/// Show seconds on the clock face (Settings > Look); mirrors
+/// `Settings::seconds`.
+pub static SECONDS: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+pub fn seconds() -> bool {
+    SECONDS.load(std::sync::atomic::Ordering::Relaxed)
+}
+
 pub fn h12() -> bool {
     H12.load(std::sync::atomic::Ordering::Relaxed)
 }
@@ -84,7 +92,11 @@ impl Now {
     }
     /// The clock face ("4:20" or "16:20").
     pub fn hhmm(&self) -> String {
-        clock(self.hour as u32, self.min as u32)
+        if seconds() {
+            format!("{}:{:02}", clock(self.hour as u32, self.min as u32), self.sec)
+        } else {
+            clock(self.hour as u32, self.min as u32)
+        }
     }
     /// "4:20 PM" or "16:20".
     pub fn hhmm_full(&self) -> String {
@@ -102,6 +114,46 @@ impl Now {
 }
 
 /// Unix seconds from the system clock.
+/// Days in a month (1-12).
+pub fn days_in_month(y: i32, m: u32) -> u32 {
+    match m {
+        1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
+        4 | 6 | 9 | 11 => 30,
+        _ if (y % 4 == 0 && y % 100 != 0) || y % 400 == 0 => 29,
+        _ => 28,
+    }
+}
+
+/// Day of the week, 0 = Sunday.
+pub fn weekday(y: i32, m: u32, d: u32) -> u32 {
+    // Sakamoto's method.
+    const T: [i32; 12] = [0, 3, 2, 5, 0, 3, 5, 1, 4, 6, 2, 4];
+    let y = if m < 3 { y - 1 } else { y };
+    ((y + y / 4 - y / 100 + y / 400 + T[(m - 1) as usize] + d as i32).rem_euclid(7)) as u32
+}
+
+/// The local date (year, month, day) of a unix time.
+pub fn local_date(unix: f64) -> (i32, u32, u32) {
+    let (y, m, d, _) = local_time(unix);
+    (y, m, d)
+}
+
+/// The local date and minute of the day of a unix time.
+pub fn local_time(unix: f64) -> (i32, u32, u32, u32) {
+    use windows::Win32::Foundation::FILETIME;
+    use windows::Win32::System::Time::{FileTimeToSystemTime, SystemTimeToTzSpecificLocalTime};
+    let t = ((unix * 10_000_000.0) as i64 + 116_444_736_000_000_000) as u64;
+    let ft = FILETIME { dwLowDateTime: t as u32, dwHighDateTime: (t >> 32) as u32 };
+    let mut utc = SYSTEMTIME::default();
+    let mut loc = SYSTEMTIME::default();
+    unsafe {
+        if FileTimeToSystemTime(&ft, &mut utc).is_err() || SystemTimeToTzSpecificLocalTime(None, &utc, &mut loc).is_err() {
+            return (1970, 1, 1, 0);
+        }
+    }
+    (loc.wYear as i32, loc.wMonth as u32, loc.wDay as u32, loc.wHour as u32 * 60 + loc.wMinute as u32)
+}
+
 pub fn unix_now() -> f64 {
     let ft = unsafe { GetSystemTimeAsFileTime() };
     let t = ((ft.dwHighDateTime as u64) << 32) | ft.dwLowDateTime as u64;

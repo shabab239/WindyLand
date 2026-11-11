@@ -63,7 +63,7 @@ impl<'a> Ui<'a> {
     pub fn button_accent(&mut self, r: Rect, label: &str, id: u32, accent: Color) {
         let bg = if self.hovered(r) { accent.with_a(0.85) } else { accent };
         self.fill_rr(r, r.h / 2.0, bg);
-        self.text(label, r, 12.0, hex(0x000000), Weight::Semi, Align::Center);
+        self.text(label, r, 12.0, hex(0x010101), Weight::Semi, Align::Center);
         self.hit(r, id);
     }
 
@@ -129,7 +129,7 @@ impl<'a> Ui<'a> {
         self.text(label, row, 12.5, col::TEXT, Weight::Regular, Align::Left);
         self.fill_rr(sw, 9.0, if on { accent } else { col::TEXT.with_a(0.18) });
         let kx = if on { sw.r() - 9.0 } else { sw.x + 9.0 };
-        self.circle(kx, sw.cy(), 7.0, if on { hex(0x000000) } else { col::TEXT });
+        self.circle(kx, sw.cy(), 7.0, if on { hex(0x010101) } else { col::TEXT });
         self.hit(r, id);
     }
 
@@ -137,7 +137,7 @@ impl<'a> Ui<'a> {
     pub fn check(&mut self, cx: f32, cy: f32, on: bool, accent: Color) {
         if on {
             self.circle(cx, cy, 8.0, accent);
-            self.icon(crate::gfx::glyph::CHECK, Rect::new(cx - 8.0, cy - 8.0, 16.0, 16.0), 9.0, hex(0x000000));
+            self.icon(crate::gfx::glyph::CHECK, Rect::new(cx - 8.0, cy - 8.0, 16.0, 16.0), 9.0, hex(0x010101));
         } else {
             self.stroke_circle(cx, cy, 7.5, col::DIM, 1.4);
         }

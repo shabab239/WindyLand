@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- **Calendar** tab: the month with today highlighted, days with to-do tasks due marked, previous / next month (or the mouse wheel), Today, and the chosen day's tasks beside the grid. The week starts on Windows' first day of the week.
+- **Themes** (Settings > Look): Black (default), Graphite, Midnight, Light and **Liquid Glass**, which blurs what's behind the notch under a clear tint with a bright rim and switches between light and dark glass with the background. While Liquid Glass is on the notch is left out of screenshots and screen sharing. Every theme meets WCAG AA text contrast (checked by the self-test, Liquid Glass over light, dark and colourful backgrounds).
+- **Show seconds** (Settings > Look): seconds on the clock; Slim and Compact grow 24 px so nothing gets squeezed.
 - **Smart hide** (Settings > General, "Step aside for windows under it", on by default; replaces "Slim down over maximized apps"): whenever a window's top (title bar, tabs, address bar) is under the notch, not only a maximized one, the notch steps aside to a thin click-through line, comes back after about 2.5 s (still click-through), steps aside again while the mouse is near it, and opens when you rest the mouse on it. Switching to such a window or dragging one across the top makes it step aside too; windows on another screen (or lower down) don't. Windows are checked only on window events (switch, drag start and stop), 10 times a second during a drag, and once a second otherwise.
 - New **Widgets** tab, for what the closed notch shows and in which order.
   - **Pick** switches items on: live activities (music, timer, Pomodoro, prayer countdown, due tasks, AI agents) and widgets: PC battery, Bluetooth device battery (AirPods too, from their battery broadcast), CPU, memory, network, free space, uptime, date, water, focus sessions today, open tasks and next prayer.

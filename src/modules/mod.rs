@@ -15,6 +15,7 @@ use crate::time::Now;
 use crate::ui::Ui;
 
 pub mod agents;
+pub mod calendar;
 pub mod clipboard;
 pub mod example;
 pub mod monitor;
@@ -49,6 +50,7 @@ pub fn all(hwnd: HWND) -> Vec<Box<dyn Module>> {
         Box::new(timer::Timer::new()),
         Box::new(water::Water::load()),
         Box::new(todo::Todo::load()),
+        Box::new(calendar::Calendar::new()),
         Box::new(shelf::Shelf::load()),
         Box::new(clipboard::Clipboard::new(hwnd)),
         Box::new(prayer::Prayer::load()),

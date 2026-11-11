@@ -319,6 +319,11 @@ pub struct Settings {
     /// What the closed notch shows, in order (Widgets tab).
     pub layout: NotchLayout,
     pub place: Place,
+    /// Seconds on the clock face (Settings > Look).
+    pub seconds: bool,
+    /// Colour theme key (Settings > Look): default, graphite, midnight,
+    /// light, glass.
+    pub theme: String,
     pub extra: BTreeMap<String, String>,
 }
 
@@ -685,6 +690,8 @@ impl Settings {
             make_room: kv.get("make_room").map_or(true, |v| v != "0"),
             layout: NotchLayout::load(&kv),
             place: Place::load(&kv),
+            seconds: kv.get("seconds").map_or(false, |v| v == "1"),
+            theme: kv.get("theme").cloned().unwrap_or_else(|| "default".into()),
             extra: kv,
         }
     }
@@ -720,6 +727,8 @@ impl Settings {
         kv.insert("make_room".into(), (self.make_room as u8).to_string());
         self.layout.save(&mut kv);
         self.place.save(&mut kv);
+        kv.insert("seconds".into(), (self.seconds as u8).to_string());
+        kv.insert("theme".into(), self.theme.clone());
         write("settings.txt", &write_kv(&kv));
     }
 }

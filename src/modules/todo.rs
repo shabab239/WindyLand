@@ -55,6 +55,22 @@ pub struct Todo {
     editor: Option<Editor>,
 }
 
+/// Tasks with a due date, from the saved list: (due unix time, title,
+/// done). The calendar marks their days.
+pub fn due_tasks() -> Vec<(f64, String, bool)> {
+    store::read("todo.txt")
+        .lines()
+        .filter_map(|line| {
+            let p: Vec<&str> = line.split('\t').collect();
+            if p.len() < 5 {
+                return None;
+            }
+            let due = p[2].parse::<f64>().ok().filter(|d| *d > 0.0)?;
+            Some((due, unesc(p[4]), p[1] == "1"))
+        })
+        .collect()
+}
+
 impl Todo {
     pub fn load() -> Todo {
         let today = Now::get().day_key();

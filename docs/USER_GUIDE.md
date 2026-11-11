@@ -14,6 +14,8 @@
 - [AI agents](#ai-agents)
 - [System monitor](#system-monitor)
 - [Widgets: what the closed notch shows](#widgets-what-the-closed-notch-shows)
+- [Calendar](#calendar)
+- [Themes and seconds](#themes-and-seconds)
 - [Uninstalling](#uninstalling)
 - [File shelf](#file-shelf)
 - [Clipboard history](#clipboard-history)
@@ -228,6 +230,20 @@ The page always shows the place in use, by name, so you can see when it's wrong.
 - **Bluetooth** shows the battery Windows knows for connected headsets, mice and keyboards. AirPods don't share theirs with Windows, so WindyLand listens for about 3 seconds once a minute to the battery broadcast AirPods send (left, right and case, in 10% steps). It only does this while the Bluetooth widget is on (or the Widgets tab is open) and AirPods are connected. Nothing is saved or sent. In a crowded place it may sometimes pick up someone else's AirPods.
 - **Weather** is the only widget that goes online by itself: while it's on, WindyLand asks Open-Meteo about every 30 minutes, with the place rounded to about 10 km. Temperatures are in °C; switch to °F on the **Place** page.
 - **Wi-Fi** shows the signal, and the network's name when Windows allows it (the same location setting as above).
+
+## Calendar
+
+The **Calendar** tab shows the month. Today has a red circle; days with to-do tasks due get a small dot (yellow while one is still open).
+- **‹ ›** (or the mouse wheel over the panel) go to the previous or next month; **Today** jumps back.
+- Click a day to see it on the right: how far away it is, and the tasks due that day with their times. Clicking a greyed day from the month before or after goes there.
+- The week starts on the day set in Windows' region settings.
+
+## Themes and seconds
+
+**Settings > Look** has the themes and the seconds switch.
+- **Themes**: **Black** (the default), **Graphite**, **Midnight**, **Light** and **Liquid Glass**. A theme changes the notch and every panel.
+- **Liquid Glass** shows a blurred view of what's behind the notch under a clear tint, with a bright edge. Over a bright window it turns into light glass with dark text, over a dark one into dark glass with white text. To see behind itself, the notch is left out of screenshots and screen sharing while Liquid Glass is on (the other themes aren't).
+- **Show seconds** puts seconds on the clock (4:20:15). The Slim and Compact notches get a little wider so nothing gets squeezed.
 
 ## Tools
 
