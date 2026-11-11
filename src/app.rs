@@ -84,7 +84,7 @@ const TOUR_PANELS: [(&str, &str, &str); 4] = [
 
 /// Tour step 4: what's in Settings, at a glance.
 const TOUR_SETTINGS: [(&str, &str, &str); 8] = [
-    ("\u{E771}", "Style & edge", "5 looks; slims over full windows"),
+    ("\u{E771}", "Style & edge", "5 looks; steps aside for windows"),
     ("\u{E76E}", "Mascot", "In the notch or taskbar"),
     (glyph::VOLUME, "Sounds", "Pick a chime, or none"),
     ("\u{E8A9}", "Panels", "Hide what you don't use"),
@@ -131,6 +131,13 @@ const TIMER_TICK: usize = 1;
 const TIMER_FRAME: usize = 2;
 /// Watches the cursor while the notch is click-through ("make room").
 const TIMER_POLL: usize = 3;
+/// Re-checks the windows under the notch while one is being dragged.
+const TIMER_MOVE: usize = 7;
+/// Smart hide: after a window comes under the notch (or you switch to it),
+/// the notch stays out of the way this long; it also stays away until this
+/// long after the mouse leaves the area around it.
+const SMART_SETTLE: f64 = 2.5;
+const SMART_NEAR: f64 = 2.0;
 /// Self-test: seconds since the last input, or -1 for the real value (build
 /// servers have had no mouse movement for ages, so the mascot would doze).
 pub static IDLE_OVERRIDE: std::sync::atomic::AtomicI64 = std::sync::atomic::AtomicI64::new(-1);
@@ -283,7 +290,15 @@ pub struct App {
     /// until the mouse has left the notch once.
     hover_block: bool,
     /// A maximized window is under the notch (checked every second).
-    max_under: bool,
+    covered: bool,
+    /// Smart hide: when the window under the notch came (or you switched to
+    /// one), until when the mouse counts as near, a window being dragged,
+    /// and when the windows were last checked.
+    covered_since: f64,
+    near_until: f64,
+    moving: bool,
+    under_at: f64,
+    was_yielding: bool,
     /// The window is click-through right now (WS_EX_TRANSPARENT).
     passthrough: bool,
     /// While click-through: when the cursor reached the hover zone.
@@ -464,7 +479,12 @@ impl App {
                 mood_since: 0.0,
                 last_activity: 0.0,
                 hover_block: false,
-                max_under: false,
+                covered: false,
+                covered_since: -10.0,
+                near_until: -10.0,
+                moving: false,
+                under_at: -10.0,
+                was_yielding: false,
                 passthrough: false,
                 poll_since: None,
                 settings_room: [0.0; 3],
@@ -483,6 +503,8 @@ impl App {
                 for (lo, hi) in [(EVENT_SYSTEM_FOREGROUND, EVENT_SYSTEM_FOREGROUND), (EVENT_SYSTEM_MINIMIZESTART, EVENT_SYSTEM_MINIMIZEEND)] {
                     let _ = SetWinEventHook(lo, hi, None, Some(on_foreground), 0, 0, WINEVENT_OUTOFCONTEXT | WINEVENT_SKIPOWNPROCESS);
                 }
+                // A window starts or stops being dragged or resized.
+                let _ = SetWinEventHook(EVENT_SYSTEM_MOVESIZESTART, EVENT_SYSTEM_MOVESIZEEND, None, Some(on_movesize), 0, 0, WINEVENT_OUTOFCONTEXT | WINEVENT_SKIPOWNPROCESS);
                 let _ = ShowWindow(hwnd, SW_SHOWNOACTIVATE);
                 SetTimer(hwnd, TIMER_TICK, 1000, None);
                 tray::add(hwnd);
@@ -1080,40 +1102,95 @@ impl App {
     }
 
     /// Making room: the setting is on and a maximized window is under us.
+    /// Smart hide is stepping aside right now: a window's top (title bar,
+    /// tabs, address bar) is under the notch, and it just came (or you
+    /// switched to it), or the mouse is near the notch but not on it, or a
+    /// window is being dragged.
     fn yielding(&self) -> bool {
-        self.settings.make_room && self.max_under
+        if !self.settings.make_room || !self.covered {
+            return false;
+        }
+        let t = self.t();
+        t - self.covered_since < SMART_SETTLE || t < self.near_until || self.moving
     }
 
     /// True when the foreground window is maximized on the notch's screen.
-    fn maximized_under(&self) -> bool {
+    /// Is any app window under the notch's place (its top area: title bar,
+    /// tabs, address bar)? Walks the top-level windows once; only called on
+    /// window events, while a window is dragged, and once a second.
+    fn window_under(&self) -> bool {
         match MAXIMIZED_OVERRIDE.load(std::sync::atomic::Ordering::Relaxed) {
             1 => return true,
             2 => return false,
             _ => {}
         }
-        unsafe {
-            let fg = GetForegroundWindow();
-            if fg.0.is_null() || fg == self.hwnd || !IsZoomed(fg).as_bool() || !IsWindowVisible(fg).as_bool() {
-                return false;
-            }
-            MonitorFromWindow(fg, MONITOR_DEFAULTTONEAREST) == MonitorFromWindow(self.hwnd, MONITOR_DEFAULTTONEAREST)
+        if self.hidden || self.dock_x.is_some() {
+            return false;
         }
+        let r = self.edge_rect(340.0, 46.0);
+        let (ox, oy, k) = (self.origin.0 as f32, self.origin.1 as f32, self.scale);
+        let area = RECT { left: (ox + r.x * k) as i32, top: (oy + r.y * k) as i32, right: (ox + r.r() * k) as i32, bottom: (oy + r.b() * k) as i32 };
+        let mut s = UnderSearch { area, me: self.hwnd, pid: std::process::id(), found: false };
+        unsafe {
+            let _ = EnumWindows(Some(under_cb), LPARAM(&mut s as *mut UnderSearch as isize));
+        }
+        s.found
     }
 
     pub fn update_make_room(&mut self) {
-        let m = self.maximized_under();
-        if m != self.max_under {
-            dlog(format!("maximized under: {m}"));
-            self.max_under = m;
+        let m = self.window_under();
+        self.under_at = self.t();
+        if m != self.covered {
+            dlog(format!("window under the notch: {m}"));
+            self.covered = m;
+            if m {
+                self.covered_since = self.t();
+            }
             self.request_frame();
         }
+        self.sync_yield();
         self.sync_passthrough();
+    }
+
+    /// Redraw when smart hide steps aside or comes back.
+    fn sync_yield(&mut self) {
+        let y = self.yielding();
+        if y != self.was_yielding {
+            self.was_yielding = y;
+            self.request_frame();
+        }
+    }
+
+    /// You switched windows: if one is under the notch, step aside again.
+    pub fn window_switched(&mut self) {
+        self.update_make_room();
+        if self.covered {
+            self.covered_since = self.t();
+            self.sync_yield();
+        }
+    }
+
+    /// A window started (or stopped) being dragged or resized.
+    pub fn window_moving(&mut self, on: bool) {
+        self.moving = on;
+        unsafe {
+            if on {
+                SetTimer(self.hwnd, TIMER_MOVE, 100, None);
+            } else {
+                let _ = KillTimer(self.hwnd, TIMER_MOVE);
+            }
+        }
+        if !on {
+            // Dropped where it covers the notch: stay out of the way a moment.
+            self.covered_since = self.t();
+        }
+        self.update_make_room();
     }
 
     /// Click-through while the closed notch makes room, so the tabs under
     /// it stay clickable; a cursor poll opens it on hover instead.
     fn sync_passthrough(&mut self) {
-        let want = self.yielding() && !self.hidden && self.mode() == Mode::Collapsed && self.queue.is_empty() && !self.dragging && self.rdrag.is_none();
+        let want = self.settings.make_room && self.covered && !self.hidden && self.mode() == Mode::Collapsed && self.queue.is_empty() && !self.dragging && self.rdrag.is_none();
         if want == self.passthrough {
             return;
         }
@@ -1147,16 +1224,25 @@ impl App {
         let x = (p.x - self.origin.0) as f32 / self.scale;
         let y = (p.y - self.origin.1) as f32 / self.scale;
         self.poll_at(x, y);
-        // Un-maximized or switched app: stop making room right away.
-        self.update_make_room();
+        // The window moved away: notice within half a second.
+        if self.t() - self.under_at >= 0.5 {
+            self.update_make_room();
+        }
+        self.sync_yield();
     }
 
     /// Cursor at canvas (x, y) while click-through: rest on the bar to open.
     pub fn poll_at(&mut self, x: f32, y: f32) {
-        let zone = self.edge_rect(220.0, 16.0);
+        // The notch's own place (even while it steps aside): resting there
+        // opens it. Around it (the address bar, tabs): it steps aside.
+        let zone = if self.yielding() { self.edge_rect(240.0, 16.0) } else { self.edge_rect(240.0, 38.0) };
         if !zone.contains(x, y) {
             self.poll_since = None;
             self.hover_block = false;
+            if self.edge_rect(460.0, 120.0).contains(x, y) {
+                self.near_until = self.t() + SMART_NEAR;
+                self.sync_yield();
+            }
             return;
         }
         if !self.can_hover_open() {
@@ -2013,7 +2099,7 @@ impl App {
             ui.toggle(right.cut_top(26.0, 2.0), "Start with Windows", startup, S_STARTUP, accent);
             ui.toggle(right.cut_top(26.0, 2.0), "Volume overlay", st.volume_overlay, S_VOLUME, accent);
             ui.toggle(right.cut_top(26.0, 2.0), "12-hour clock", st.clock12, S_CLOCK12, accent);
-            ui.toggle(right.cut_top(26.0, 2.0), "Slim down over maximized apps", st.make_room, S_MAKE_ROOM, accent);
+            ui.toggle(right.cut_top(26.0, 2.0), "Step aside for windows under it", st.make_room, S_MAKE_ROOM, accent);
             ui.toggle(right.cut_top(26.0, 8.0), "Check for updates automatically", st.update_check, S_UPDATE_AUTO, accent);
             let (a, b) = half(&mut right, 6.0);
             ui.button(a, if checking { "Checking..." } else { "Check for updates" }, S_UPDATES);
@@ -2966,6 +3052,7 @@ impl App {
                     TIMER_TICK => self.tick(),
                     TIMER_FRAME => self.timer_frame(),
                     TIMER_POLL => self.poll_cursor(),
+                    TIMER_MOVE => self.update_make_room(),
                     _ => {}
                 }
                 Some(LRESULT(0))
@@ -4030,7 +4117,7 @@ pub fn selftest() -> String {
                     tight.push(s);
                 }
             }
-            for s in ["Start with Windows", "Volume overlay", "Check for updates automatically", "Mic & camera dots", "Record what I copy", "Show them in the notch", "Include message text", "12-hour clock", "Slim down over maximized apps", "Show what I copy"] {
+            for s in ["Start with Windows", "Volume overlay", "Check for updates automatically", "Mic & camera dots", "Record what I copy", "Show them in the notch", "Include message text", "12-hour clock", "Step aside for windows under it", "Show what I copy"] {
                 if a.gfx.measure(s, 12.5, Weight::Regular) > right_w - 16.0 - 42.0 {
                     tight.push(s);
                 }
@@ -6577,6 +6664,79 @@ fn widget_tests(a: &mut App) -> String {
     out += &format!("{:<4} an empty list leaves just the clock ({:.0} wide)\n", ok(a.showing_ids().is_empty() && tgt2.0 < full_w), tgt2.0);
     (a.expanded, a.tab, a.settings.layout) = saved;
     out += &widget_tests_2(a);
+    out += &smart_hide_tests(a);
+    out
+}
+
+/// Self-test: stepping aside for a window under the notch.
+fn smart_hide_tests(a: &mut App) -> String {
+    let o = std::sync::atomic::Ordering::Relaxed;
+    let ok = |b: bool| if b { "OK" } else { "FAIL" };
+    let mut out = String::new();
+    let saved = (a.settings.style, a.settings.make_room, a.expanded, a.hover_block, a.settings_open);
+    a.settings.style = NotchStyle::Full;
+    a.settings.make_room = true;
+    a.expanded = false;
+    a.settings_open = false;
+    a.toast = None;
+    a.queue.clear();
+    a.hover_block = false;
+    a.near_until = -10.0;
+    // A window comes under the notch: it steps aside at once...
+    MAXIMIZED_OVERRIDE.store(1, o);
+    a.covered = false;
+    a.update_make_room();
+    let aside = a.yielding() && a.look() == NotchStyle::Pill && a.passthrough;
+    // ...and comes back after a moment, still click-through.
+    a.covered_since = a.t() - SMART_SETTLE - 0.1;
+    a.sync_yield();
+    let back = !a.yielding() && a.look() == NotchStyle::Full && a.passthrough;
+    // The mouse near it (the address bar below): steps aside again.
+    let zone = a.edge_rect(240.0, 38.0);
+    a.poll_at(zone.cx() + 150.0, zone.b() + 40.0);
+    let near = a.yielding();
+    // The mouse gone for a while: back.
+    a.poll_at(zone.cx(), zone.b() + 300.0);
+    a.near_until = a.t() - 0.1;
+    a.sync_yield();
+    let gone = !a.yielding();
+    // Resting on the notch itself opens it.
+    a.poll_at(zone.cx(), zone.cy());
+    std::thread::sleep(std::time::Duration::from_millis(360));
+    a.poll_at(zone.cx(), zone.cy());
+    let opened = a.expanded && !a.passthrough;
+    a.expanded = false;
+    a.sync_passthrough();
+    // Switching to a window under it, or dragging one: steps aside.
+    a.covered_since = a.t() - 10.0;
+    a.window_switched();
+    let switched = a.yielding();
+    a.covered_since = a.t() - 10.0;
+    a.moving = true;
+    let dragging = a.yielding();
+    a.moving = false;
+    out += &format!(
+        "{:<4} smart hide: steps aside when a window comes under it, comes back, steps aside when the mouse is near, opens when you rest on it, steps aside on switch and drag {:?}
+",
+        ok(aside && back && near && gone && opened && switched && dragging),
+        (aside, back, near, gone, opened, switched, dragging)
+    );
+    // No window under it: the normal notch.
+    MAXIMIZED_OVERRIDE.store(2, o);
+    a.update_make_room();
+    let normal = !a.yielding() && !a.passthrough && a.look() == NotchStyle::Full;
+    let r = |l, t, rr, b| RECT { left: l, top: t, right: rr, bottom: b };
+    let area = r(400, 0, 740, 46);
+    let rects = under_rect(r(0, 0, 1920, 1040), area) && under_rect(r(500, 20, 900, 600), area) && !under_rect(r(500, 46, 900, 600), area) && !under_rect(r(0, 0, 400, 300), area);
+    out += &format!("{:<4} smart hide: normal notch with nothing under it; overlap rules ({normal}, {rects})
+", ok(normal && rects));
+    MAXIMIZED_OVERRIDE.store(0, o);
+    let real = a.window_under();
+    MAXIMIZED_OVERRIDE.store(2, o);
+    out += &format!("INFO a window under the notch on this screen right now: {real}
+");
+    (a.settings.style, a.settings.make_room, a.expanded, a.hover_block, a.settings_open) = saved;
+    a.update_make_room();
     out
 }
 
@@ -6847,8 +7007,76 @@ fn is_fullscreen(win: RECT, mon: RECT, zoomed: bool, class: &str) -> bool {
 
 /// Re-check full screen the moment another window takes the foreground or
 /// is minimized/restored (the 1 s tick covers everything else).
-extern "system" fn on_foreground(_h: windows::Win32::UI::Accessibility::HWINEVENTHOOK, _e: u32, _w: HWND, _o: i32, _c: i32, _t: u32, _ms: u32) {
-    with_app(|a| a.check_fullscreen());
+extern "system" fn on_foreground(_h: windows::Win32::UI::Accessibility::HWINEVENTHOOK, e: u32, _w: HWND, _o: i32, _c: i32, _t: u32, _ms: u32) {
+    with_app(|a| {
+        a.check_fullscreen();
+        if e == EVENT_SYSTEM_FOREGROUND {
+            a.window_switched();
+        } else {
+            a.update_make_room();
+        }
+    });
+}
+
+extern "system" fn on_movesize(_h: windows::Win32::UI::Accessibility::HWINEVENTHOOK, e: u32, _w: HWND, _o: i32, _c: i32, _t: u32, _ms: u32) {
+    with_app(|a| a.window_moving(e == EVENT_SYSTEM_MOVESIZESTART));
+}
+
+/// Looking for a window under the notch (EnumWindows).
+struct UnderSearch {
+    area: RECT,
+    me: HWND,
+    pid: u32,
+    found: bool,
+}
+
+/// Does this window sit under the notch's area? Skips our own windows,
+/// hidden, minimized and cloaked ones, tool windows, click-through overlays,
+/// the desktop and the taskbar.
+unsafe extern "system" fn under_cb(h: HWND, lp: LPARAM) -> BOOL {
+    let s = &mut *(lp.0 as *mut UnderSearch);
+    if h == s.me || !IsWindowVisible(h).as_bool() || IsIconic(h).as_bool() {
+        return TRUE;
+    }
+    let mut pid = 0u32;
+    GetWindowThreadProcessId(h, Some(&mut pid));
+    if pid == s.pid {
+        return TRUE;
+    }
+    let ex = GetWindowLongPtrW(h, GWL_EXSTYLE);
+    if ex & WS_EX_TOOLWINDOW.0 as isize != 0 || (ex & WS_EX_TRANSPARENT.0 as isize != 0 && ex & WS_EX_LAYERED.0 as isize != 0) {
+        return TRUE;
+    }
+    use windows::Win32::Graphics::Dwm::{DwmGetWindowAttribute, DWMWA_CLOAKED, DWMWA_EXTENDED_FRAME_BOUNDS};
+    let mut cloaked = 0u32;
+    let _ = DwmGetWindowAttribute(h, DWMWA_CLOAKED, &mut cloaked as *mut u32 as *mut core::ffi::c_void, 4);
+    if cloaked != 0 {
+        return TRUE;
+    }
+    let mut buf = [0u16; 64];
+    let n = GetClassNameW(h, &mut buf) as usize;
+    let class = String::from_utf16_lossy(&buf[..n.min(buf.len())]);
+    if matches!(class.as_str(), "Progman" | "WorkerW" | "Shell_TrayWnd" | "Shell_SecondaryTrayWnd") {
+        return TRUE;
+    }
+    let mut wr = RECT::default();
+    if DwmGetWindowAttribute(h, DWMWA_EXTENDED_FRAME_BOUNDS, &mut wr as *mut RECT as *mut core::ffi::c_void, std::mem::size_of::<RECT>() as u32).is_err() {
+        let _ = GetWindowRect(h, &mut wr);
+    }
+    // Small popups (menus, tooltips) don't count.
+    if wr.right - wr.left < 80 || wr.bottom - wr.top < 40 {
+        return TRUE;
+    }
+    if under_rect(wr, s.area) {
+        s.found = true;
+        return FALSE;
+    }
+    TRUE
+}
+
+/// Two screen rectangles overlap.
+pub(crate) fn under_rect(w: RECT, area: RECT) -> bool {
+    w.left < area.right && w.right > area.left && w.top < area.bottom && w.bottom > area.top
 }
 
 fn shift(r: Rect, dx: f32) -> Rect {

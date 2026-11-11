@@ -69,7 +69,7 @@ Open **Settings** and pick one under **Notch style**:
 | Pill | A thin bar, tinted while music or a timer runs | Almost invisible |
 | Hidden | Nothing | Rest the mouse at the edge to open |
 
-**Maximized windows:** with a maximized window under it (Chrome, Edge, VS Code...), the Full, Slim and Compact notch slims down to a thin bar, and clicks go straight through it, so the browser tabs under the notch stay clickable. Rest the mouse on the bar for a moment to open the notch. Alerts still drop down as usual. Turn this off with **Slim down over maximized apps** in Settings > General.
+**Windows under the notch (smart hide):** when a window's top (title bar, tabs, address bar) is under the notch, for example a maximized browser or one dragged to the top, the notch steps aside to a thin line and clicks go straight through to the window. After about 2.5 seconds it comes back, still click-through. When your mouse comes near it (to reach the tabs or address bar), it steps aside again and comes back 2 seconds after the mouse leaves. Rest the mouse on the notch itself to open it. Switching to a window under it, or dragging a window across the top, makes it step aside too. Alerts still drop down as usual. Turn this off with **Step aside for windows under it** in Settings > General.
 
 ## Now playing and lyrics
 
@@ -341,7 +341,7 @@ Open Settings with the **gear** at the end of the tab bar, a plain **right-click
 | **General** page: Start with Windows | Launch at sign-in |
 | Volume overlay | Show volume changes |
 | 12-hour clock | 4:20 PM (the default) or 16:20, everywhere in WindyLand |
-| Slim down over maximized apps | A thin, click-through bar while a maximized window is under the notch (on by default) |
+| Step aside for windows under it | Smart hide: steps aside while a window's top is under the notch, comes back after a moment, steps aside when the mouse is near (on by default) |
 | Check for updates | Looks for a newer version now |
 | Check for updates automatically | Asks GitHub for the latest version about twice a day. On by default; also offered by the installer |
 | Open data folder | Opens `%APPDATA%\WindyLand` |
