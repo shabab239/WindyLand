@@ -241,7 +241,7 @@ The **Calendar** tab shows the month. Today has a red circle; days with to-do ta
 ## Themes and seconds
 
 **Settings > Look** has the themes and the seconds switch.
-- **Themes**: **Black** (the default), **Graphite**, **Midnight**, **Light** and **Liquid Glass**. A theme changes the notch and every panel.
+- **Themes**: **Black** (the default), **Graphite**, **Midnight**, **Rose**, **Forest**, **Ocean**, **Light**, **Blossom** (light pink), **Paper** (old paper) and **Liquid Glass**. A theme changes the notch and every panel. On the light themes, coloured labels are a little darker so they stay readable.
 - **Liquid Glass** shows a blurred view of what's behind the notch under a clear tint, with a bright edge. Over a bright window it turns into light glass with dark text, over a dark one into dark glass with white text. To see behind itself, the notch is left out of screenshots and screen sharing while Liquid Glass is on (the other themes aren't).
 - **Show seconds** puts seconds on the clock (4:20:15). The Slim and Compact notches get a little wider so nothing gets squeezed.
 

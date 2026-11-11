@@ -28,7 +28,7 @@ open, move away to close. Free and open source.
 | <img src="docs/images/agents.png" alt="AI agents"> | <img src="docs/images/monitor.png" alt="System monitor"> |
 | **AI agents**: Hermes, Claude Code and Codex working, waiting for you, done | **System monitor**: CPU, memory, network, also on the closed notch |
 
-A **Calendar** tab, **themes** (Black, Graphite, Midnight, Light and Liquid Glass) and an optional seconds clock.
+A **Calendar** tab, **themes** (Black, Graphite, Midnight, Rose, Forest, Ocean, Light, Blossom, Paper and Liquid Glass) and an optional seconds clock.
 
 **Widgets** decide what the closed notch shows, and in which order: battery, AirPods and other Bluetooth batteries, weather, Wi-Fi, volume and mic mute, CPU, memory, network, the date and more, next to music, timers and agents. Pick them, then drag them into rows: one item across both sides of the clock, or two side by side.
 

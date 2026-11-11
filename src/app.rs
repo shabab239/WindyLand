@@ -2263,19 +2263,22 @@ impl App {
             self.settings_room[2] = r.b() - right.y;
         } else if page == 3 {
             label(&mut ui, right.cut_top(16.0, 4.0), "Theme");
-            let rows = [right.cut_top(58.0, 6.0), right.cut_top(58.0, 8.0)];
+            // Four to a row.
+            let per = 4;
+            let n_rows = (crate::gfx::THEMES.len() + per - 1) / per;
+            let rows: Vec<Rect> = (0..n_rows).map(|k| right.cut_top(46.0, if k + 1 == n_rows { 8.0 } else { 5.0 })).collect();
             let saved = ui.theme;
             ui.theme = crate::gfx::THEMES[0];
             for (i, th) in crate::gfx::THEMES.iter().enumerate() {
-                let cell = rows[i / 3].columns(3, 6.0)[i % 3];
+                let cell = rows[i / per].columns(per, 5.0)[i % per];
                 let sel = st.theme == th.key;
                 let bg = if sel { accent.with_a(0.22) } else if ui.hovered(cell) { col::BTN_HOVER } else { col::BTN };
                 ui.fill_rr(cell, 10.0, bg);
                 if sel {
                     ui.stroke_rr(cell, 10.0, accent.with_a(0.85), 1.4);
                 }
-                let mut c = cell.inset(6.0);
-                let screen = c.cut_top(28.0, 3.0);
+                let mut c = cell.inset(5.0);
+                let screen = c.cut_top(22.0, 2.0);
                 // A little screen with the notch in that theme.
                 if th.glass {
                     for (k, colr) in [0x7B5CFF, 0xFF8A5B, 0x3CC8C8].into_iter().enumerate() {
@@ -2285,27 +2288,27 @@ impl App {
                 } else {
                     ui.fill_rr_raw(screen, 5.0, hex(0x4A4A52));
                 }
-                let n = Rect::new(screen.cx() - 22.0, screen.y + 3.0, 44.0, 14.0);
+                let n = Rect::new(screen.cx() - 18.0, screen.y + 3.0, 36.0, 13.0);
                 ui.fill_rr_raw(n, 6.0, th.bg);
                 if th.glass {
                     ui.stroke_rr(n, 6.0, hex(0xFFFFFF).with_a(0.6), 1.0);
                 }
                 ui.theme = *th;
-                ui.text("4:20", n, 8.5, col::TEXT, Weight::Semi, Align::Center);
+                ui.text("4:20", n, 8.0, col::TEXT, Weight::Semi, Align::Center);
                 // The name in the theme the panel is drawn in.
                 ui.theme = saved;
-                ui.text(th.name, c, 10.5, if sel { col::TEXT } else { col::DIM }, Weight::Semi, Align::Center);
+                ui.text(th.name, c, 10.0, if sel { col::TEXT } else { col::DIM }, Weight::Semi, Align::Center);
                 ui.theme = crate::gfx::THEMES[0];
                 ui.hit(cell, S_THEME + i as u32);
             }
             ui.theme = saved;
-            ui.toggle(right.cut_top(26.0, 6.0), "Show seconds", st.seconds, S_SECONDS, accent);
+            ui.toggle(right.cut_top(26.0, 4.0), "Show seconds", st.seconds, S_SECONDS, accent);
             let note = if st.theme == "glass" {
-                "Liquid Glass blurs what's behind the notch, so the notch is left out of screenshots and screen sharing."
+                "Liquid Glass blurs what's behind it, so the notch is left out of screenshots and screen sharing."
             } else {
-                "Themes change the notch and every panel. Liquid Glass adapts to what's behind it."
+                "A theme changes the notch and every panel."
             };
-            ui.text_wrap(note, right.cut_top(44.0, 0.0), 10.5, col::DIM, Weight::Regular, Align::Left);
+            ui.text_wrap(note, right.cut_top(30.0, 0.0), 10.0, col::DIM, Weight::Regular, Align::Left);
             self.settings_room[3] = r.b() - right.y;
         } else {
             label(&mut ui, right.cut_top(16.0, 2.0), "Windows notifications");
@@ -6905,7 +6908,7 @@ fn look_tests(a: &mut App) -> String {
     for kind in ["light", "dark", "color"] {
         let (w, h, px, l) = crate::glass::sample(kind, 60, 20);
         let _ = (w, h);
-        let t: Theme = if l > 0.62 { GLASS_LIGHT } else { THEMES[4] };
+        let t: Theme = if l > 0.62 { GLASS_LIGHT } else { THEMES.iter().copied().find(|t| t.glass).unwrap_or(THEMES[0]) };
         let mut min = f32::MAX;
         for p in px.chunks_exact(4) {
             let back = Color { r: p[2] as f32 / 255.0, g: p[1] as f32 / 255.0, b: p[0] as f32 / 255.0, a: 1.0 };
@@ -6916,6 +6919,22 @@ fn look_tests(a: &mut App) -> String {
             weak.push(format!("glass on {kind} {min:.1}"));
         }
     }
+    // Coloured labels (orange, yellow, green, red, blue, cyan) on each
+    // light theme, as the theme darkens them.
+    let mut acc = Vec::new();
+    for t in THEMES.iter().filter(|t| t.tint < 1.0) {
+        let bg = Color { a: 1.0, ..t.bg };
+        let min = [col::ACCENT, col::YELLOW, col::GREEN, col::RED, col::BLUE, col::CYAN]
+            .iter()
+            .map(|c| contrast(Color { r: c.r * t.tint, g: c.g * t.tint, b: c.b * t.tint, a: 1.0 }, bg))
+            .fold(f32::MAX, f32::min);
+        acc.push(format!("{} {min:.1}", t.key));
+        if min < 3.0 {
+            weak.push(format!("{} accents {min:.1}", t.key));
+        }
+    }
+    out += &format!("{:<4} coloured labels on the light themes reach 3:1 (icons and bold labels) {acc:?}
+", ok(acc.iter().all(|a| !weak.iter().any(|w| w.starts_with(a.split(' ').next().unwrap_or(""))))));
     out += &format!("{:<4} every theme's text is readable (WCAG AA or better), Liquid Glass on light, dark and colour backdrops {worst:?} {weak:?}
 ", ok(weak.is_empty()));
     // Each theme draws: the panel and the closed notch render without errors.
@@ -6934,7 +6953,7 @@ fn look_tests(a: &mut App) -> String {
             }
         }
     }
-    let glass_drawn = a.backdrop.is_some();
+    let glass_drawn = a.backdrop.is_some() || THEMES.iter().all(|t| !t.glass);
     out += &format!("{:<4} every theme draws the notch and panels; Liquid Glass has its backdrop {bad:?} {glass_drawn}
 ", ok(bad.is_empty() && glass_drawn));
     (a.settings.theme, a.settings.style, a.expanded, a.tab, a.settings_open) = saved;

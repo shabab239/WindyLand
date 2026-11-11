@@ -178,11 +178,16 @@ const fn theme(key: &'static str, name: &'static str, bg: Color, text: u32, dim:
     Theme { key, name, bg, text: hex(text), dim: hex(dim), faint: hex(faint), over: hex(over), tip, tint, glass }
 }
 
-pub const THEMES: [Theme; 5] = [
+pub const THEMES: [Theme; 10] = [
     theme("default", "Black", hex(0x000000), 0xF5F5F7, 0x9A9AA0, 0x5A5A60, 0xFFFFFF, hex(0x2A2A2E), 1.0, false),
     theme("graphite", "Graphite", hex(0x1C1C1E), 0xF5F5F7, 0xA1A1A6, 0x6E6E73, 0xFFFFFF, hex(0x3A3A3C), 1.0, false),
     theme("midnight", "Midnight", hex(0x0A1430), 0xEAF0FF, 0x9AAACB, 0x5B6A8A, 0xC8D6FF, hex(0x1A2648), 1.0, false),
-    theme("light", "Light", hex(0xF5F5F7), 0x1C1C1E, 0x6E6E73, 0x9C9CA1, 0x000000, hex(0xFFFFFF), 0.78, false),
+    theme("rose", "Rose", hex(0x3A0F26), 0xFFF0F6, 0xF0A8C6, 0xA4708A, 0xFFD6E8, hex(0x541A3A), 1.0, false),
+    theme("forest", "Forest", hex(0x0F2A1D), 0xEAF7EE, 0x9FCDB0, 0x5F8C73, 0xCDEFD9, hex(0x1B3F2C), 1.0, false),
+    theme("ocean", "Ocean", hex(0x0B2A3A), 0xE8F6FB, 0x95C5D8, 0x5A8A9D, 0xC9EAF6, hex(0x15394D), 1.0, false),
+    theme("light", "Light", hex(0xF5F5F7), 0x1C1C1E, 0x6E6E73, 0x9C9CA1, 0x000000, hex(0xFFFFFF), 0.6, false),
+    theme("blossom", "Blossom", hex(0xFBE6EE), 0x3A1424, 0x87556A, 0xB4899B, 0x3A1424, hex(0xFFF5F9), 0.6, false),
+    theme("paper", "Paper", hex(0xF0E6CF), 0x3A2E1C, 0x75664E, 0xA39276, 0x4A3A22, hex(0xFBF5E6), 0.6, false),
     theme("glass", "Liquid Glass", hex(0x000000).with_a(0.34), 0xFFFFFF, 0xDCDCE2, 0xA8A8B0, 0xFFFFFF, hex(0x2A2A2E).with_a(0.92), 1.0, true),
 ];
 
